@@ -13,6 +13,8 @@ pub struct Settings {
     /// 失焦自动收起
     pub autohide_on_blur: bool,
     pub theme: String,
+    /// 文件索引根目录；空表示默认 `%USERPROFILE%`
+    pub index_roots: Vec<String>,
 }
 
 impl Default for Settings {
@@ -21,6 +23,7 @@ impl Default for Settings {
             hotkey: "alt+space".into(),
             autohide_on_blur: true,
             theme: "dark".into(),
+            index_roots: Vec::new(),
         }
     }
 }

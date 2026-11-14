@@ -209,6 +209,18 @@ fn default_roots() -> Vec<PathBuf> {
             return list;
         }
     }
+
+    // 设置里配置的根目录优先于默认的用户目录
+    let configured: Vec<PathBuf> = crate::settings::current()
+        .index_roots
+        .iter()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .collect();
+    if !configured.is_empty() {
+        return configured;
+    }
+
     let profile = std::env::var_os("USERPROFILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("C:\\Users\\Public"));

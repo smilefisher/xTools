@@ -260,6 +260,9 @@ pub fn run() {
         return;
     }
 
+    // 设置必须在 AppState 之前加载：索引根目录来自配置
+    settings::init();
+
     tauri::Builder::default()
         // 单实例必须最先注册：第二次启动直接把已有面板叫出来
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -297,7 +300,6 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
-            settings::init();
             eprintln!("[boot] settings ok, hotkey={}", settings::current().hotkey);
 
             // 预热：窗口与 WebView 一次创建，之后只做显示/隐藏

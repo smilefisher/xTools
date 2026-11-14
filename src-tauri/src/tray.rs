@@ -6,12 +6,16 @@ use tauri::AppHandle;
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "唤起面板", true, None::<&str>)?;
+    let shot = MenuItem::with_id(app, "shot", "截图  Alt+Shift+A", true, None::<&str>)?;
+    let json = MenuItem::with_id(app, "json", "JSON 工具", true, None::<&str>)?;
     let reset = MenuItem::with_id(app, "reset", "重新注册热键", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 xTools", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
             &show,
+            &shot,
+            &json,
             &PredefinedMenuItem::separator(app)?,
             &reset,
             &PredefinedMenuItem::separator(app)?,
@@ -25,6 +29,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => crate::win::show_palette(app),
+            "shot" => crate::shot::toggle(app),
+            "json" => {
+                if let Err(err) = crate::shot::open_json(app, None) {
+                    eprintln!("[tray] 打开 JSON 工具失败：{err}");
+                }
+            }
             "reset" => {
                 let spec = crate::settings::current().hotkey;
                 match crate::hotkey::register(app, &spec) {

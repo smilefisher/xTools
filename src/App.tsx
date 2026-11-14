@@ -20,6 +20,21 @@ type Row =
   | { kind: "file"; hit: FileHit }
   | { kind: "json"; text: string };
 
+type Mode = "" | "a" | "f" | "j";
+
+/** 前缀路由：`a ` 只搜应用、`f ` 只搜文件、`j ` 进 JSON 工具，其余走混合搜索。 */
+function parseQuery(raw: string): { mode: Mode; text: string } {
+  const match = /^([afj])\s+(.*)$/i.exec(raw);
+  if (match) {
+    return { mode: match[1].toLowerCase() as Mode, text: match[2] };
+  }
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === "f" || trimmed === "a" || trimmed === "j") {
+    return { mode: trimmed as Mode, text: "" };
+  }
+  return { mode: "", text: raw };
+}
+
 export default function App() {
   const [query, setQuery] = createSignal("");
   const [apps, setApps] = createSignal<AppHit[]>([]);
@@ -35,10 +50,14 @@ export default function App() {
   let toastTimer: number | undefined;
   const token = { current: 0 };
 
+  const parsed = createMemo(() => parseQuery(query()));
+
   const jsonIntent = createMemo<string | null>(() => {
-    const q = query().trim();
+    const { mode, text } = parsed();
+    if (mode === "j") return text;
+    if (mode !== "") return null;
+    const q = text.trim();
     if (q.startsWith("{") || q.startsWith("[")) return q;
-    if (q === "json") return "";
     return null;
   });
 
@@ -62,12 +81,18 @@ export default function App() {
     }
   };
 
-  const search = async (text: string) => {
+  const search = async (raw: string) => {
     const mine = ++token.current;
+    const { mode, text } = parseQuery(raw);
+    const wantApps = mode === "" || mode === "a";
+    const wantFiles = mode === "f" || (mode === "" && text.trim().length > 0);
+
     try {
       const [appHits, fileHits] = await Promise.all([
-        invoke<AppHit[]>("app_search", { query: text, limit: 12 }),
-        text.trim()
+        wantApps
+          ? invoke<AppHit[]>("app_search", { query: text, limit: 12 })
+          : Promise.resolve<AppHit[]>([]),
+        wantFiles
           ? invoke<FileHit[]>("file_search", { query: text, limit: 20 })
           : Promise.resolve<FileHit[]>([]),
       ]);
@@ -234,7 +259,7 @@ export default function App() {
           ref={inputEl}
           autofocus
           spellcheck={false}
-          placeholder="搜索应用、文件，或输入 { 编辑 JSON…"
+          placeholder="搜索应用与文件　·　f 文件名　a 应用名　j/{ JSON"
           value={query()}
           onInput={(event) => {
             const text = event.currentTarget.value;
