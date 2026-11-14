@@ -77,7 +77,7 @@ npm run tauri -- dev -- --bench=20
 
 | 能力 | 说明 |
 |---|---|
-| 应用搜索 | 开始菜单 `.lnk` + `App Paths` 注册表，中文/拼音首字母/子序列匹配，图标按需提取并缓存，使用频次加权 |
+| 应用搜索 | 开始菜单 `.lnk` + `App Paths` 注册表 + **UWP/Store 应用**（`Get-StartApps`，AUMID 启动），中文/拼音首字母/子序列匹配，图标按需提取并缓存，使用频次加权 |
 | 文件搜索 | 目录遍历建索引（默认 `%USERPROFILE%`），内存紧凑布局 + rayon 并行扫描，落盘缓存 6 小时，`ext:` 过滤、空格 AND |
 | 截图 / 贴图 | `Alt+Shift+A` 唤起全屏选区 → 回车复制到剪贴板、`Ctrl+回车` 贴到屏幕；截图自动存一份到 `%LOCALAPPDATA%\xtools\shots` |
 | JSON 工具 | 独立窗口（CodeMirror 6）：格式化（保序/2·4 空格/Tab）、压缩、键排序、校验（报行列）、JSONPath 查询；面板里输入 `{` 可直接带内容打开 |

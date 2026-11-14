@@ -470,6 +470,15 @@ pub fn run() {
         return;
     }
 
+    if std::env::args().any(|arg| arg == "--probe-uwp") {
+        let apps = crate::search::app_index::uwp_apps();
+        println!("UWP 应用：{} 个", apps.len());
+        for (name, aumid) in apps.iter().take(15) {
+            println!("  {name}  ←  {aumid}");
+        }
+        return;
+    }
+
     if std::env::args().any(|arg| arg == "--self-check") {
         self_check();
         return;

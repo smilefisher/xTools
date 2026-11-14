@@ -64,6 +64,11 @@ impl AppIndex {
             raw.push((name, exe, "apppath"));
         }
 
+        // UWP 应用：AUMID 交给 shell:AppsFolder 启动
+        for (name, aumid) in uwp_apps() {
+            raw.push((name, format!("shell:AppsFolder\\{aumid}"), "uwp"));
+        }
+
         // 同名只留一个（开始菜单优先，因为 .lnk 自带工作目录与参数）
         raw.sort_by_key(|(_, _, source)| if *source == "startmenu" { 0 } else { 1 });
         let mut seen: HashSet<String> = HashSet::new();
@@ -384,7 +389,118 @@ pub fn is_elevated_process() -> bool {
     }
 }
 
+/// 枚举 UWP/Store 应用：开始菜单里没有它们，但用户搜「计算器」「设置」时必须有。
+///
+/// 走 `Get-StartApps`（Shell 的 AppsFolder 视图）而不是 WinRT `PackageManager`：
+/// 后者在非交互/锁屏状态下会返回 ACCESS_DENIED（实测），前者稳定且自带显示名。
+/// 结果缓存到磁盘，启动时直接读，后台再异步刷新。
+pub fn uwp_apps() -> Vec<(String, String)> {
+    if let Some(cached) = load_uwp_cache() {
+        return cached;
+    }
+    let fresh = fetch_uwp_apps();
+    save_uwp_cache(&fresh);
+    fresh
+}
+
+fn fetch_uwp_apps() -> Vec<(String, String)> {
+    // 通过临时文件取结果：PowerShell 的 stdout 走控制台代码页（GBK），
+    // 直接管道读回来中文会变乱码；文件用 UTF-8 写就没有这个问题。
+    let temp = std::env::temp_dir().join("xtools-uwp.json");
+    let script = format!(
+        "Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress | Set-Content -Path '{}' -Encoding UTF8",
+        temp.display()
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output();
+
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let raw = match std::fs::read(&temp) {
+        Ok(bytes) => bytes,
+        Err(_) => return Vec::new(),
+    };
+    let _ = std::fs::remove_file(&temp);
+
+    // 去掉 UTF-8 BOM
+    let raw = raw.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&raw);
+    let text = String::from_utf8_lossy(raw);
+    parse_start_apps(&text)
+}
+
+fn parse_start_apps(text: &str) -> Vec<(String, String)> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text.trim()) else {
+        return Vec::new();
+    };
+
+    let items = match value {
+        serde_json::Value::Array(items) => items,
+        serde_json::Value::Object(_) => vec![value],
+        _ => return Vec::new(),
+    };
+
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let app_id = item.get("AppID").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        // UWP 的 AUMID 形如 `PackageFamilyName!AppId`；桌面程序的 AppID 是
+        // "Chrome" 这类别名或可执行文件名，已经在开始菜单索引里了，这里跳过
+        if name.is_empty() || !app_id.contains('!') {
+            continue;
+        }
+        result.push((name, app_id));
+    }
+    result
+}
+
+fn uwp_cache_path() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(|base| PathBuf::from(base).join("xtools").join("index").join("uwp.json"))
+}
+
+fn load_uwp_cache() -> Option<Vec<(String, String)>> {
+    let path = uwp_cache_path()?;
+    let meta = std::fs::metadata(&path).ok()?;
+    let age = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.elapsed().ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(u64::MAX);
+    if age > 24 * 3600 {
+        return None;
+    }
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Vec<(String, String)>>(&raw).ok()
+}
+
+fn save_uwp_cache(apps: &[(String, String)]) {
+    let Some(path) = uwp_cache_path() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(raw) = serde_json::to_string(apps) {
+        let _ = std::fs::write(path, raw);
+    }
+}
+
 pub fn launch(path: &str, run_as_admin: bool) -> Result<(), String> {
+    // UWP 用 shell: 协议交给资源管理器激活
+    if path.starts_with("shell:") {
+        return std::process::Command::new("explorer.exe")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|err| err.to_string());
+    }
+
     #[cfg(windows)]
     {
         use windows::core::PCWSTR;
