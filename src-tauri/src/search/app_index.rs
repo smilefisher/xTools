@@ -541,10 +541,118 @@ pub fn icon_png(path: &str, cache_dir: &Path) -> Option<Vec<u8>> {
     if let Ok(bytes) = std::fs::read(&cache_file) {
         return Some(bytes);
     }
-    let bytes = extract_icon_png(path)?;
+    // UWP 的 `shell:AppsFolder\...` 走 shell 命名空间取图，SHGetFileInfo 不认这种路径
+    let bytes = if path.starts_with("shell:") {
+        shell_item_png(path)
+    } else {
+        extract_icon_png(path)
+    }?;
     let _ = std::fs::create_dir_all(cache_dir);
     let _ = std::fs::write(&cache_file, &bytes);
     Some(bytes)
+}
+
+/// 用 `IShellItemImageFactory` 取 shell 项的 32px 图标（UWP 应用靠这个）。
+#[cfg(windows)]
+fn shell_item_png(path: &str) -> Option<Vec<u8>> {
+    use std::ffi::c_void;
+
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::{
+        DeleteObject, GetDC, GetDIBits, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HBITMAP,
+    };
+    use windows::Win32::UI::Shell::{
+        IShellItemImageFactory, SHCreateItemFromIDList, SHParseDisplayName, SIIGBF_ICONONLY,
+    };
+
+    const SIZE_PX: i32 = 32;
+    let debug = std::env::var_os("XTOOLS_DEBUG").is_some();
+    let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut pidl = std::ptr::null_mut();
+
+    unsafe {
+        // shell 命名空间解析要求线程已初始化 COM
+        let hr = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+        if debug {
+            eprintln!("[icon] CoInitializeEx -> {hr:?}");
+        }
+        match SHParseDisplayName(PCWSTR(wide.as_ptr()), None, &mut pidl, 0, None) {
+            Ok(()) => {}
+            Err(err) => {
+                if debug {
+                    eprintln!("[icon] SHParseDisplayName({path}) 失败：{err}");
+                }
+                return None;
+            }
+        }
+    }
+    if pidl.is_null() {
+        if debug {
+            eprintln!("[icon] pidl 为空：{path}");
+        }
+        return None;
+    }
+
+    unsafe {
+        let factory: IShellItemImageFactory = SHCreateItemFromIDList(pidl).ok()?;
+        let hbmp: HBITMAP = factory
+            .GetImage(
+                SIZE {
+                    cx: SIZE_PX,
+                    cy: SIZE_PX,
+                },
+                SIIGBF_ICONONLY,
+            )
+            .ok()?;
+
+        let screen = GetDC(None);
+        let mut info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: SIZE_PX,
+                biHeight: -SIZE_PX,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut pixels = vec![0u8; (SIZE_PX * SIZE_PX * 4) as usize];
+        let lines = GetDIBits(
+            screen,
+            hbmp,
+            0,
+            SIZE_PX as u32,
+            Some(pixels.as_mut_ptr() as *mut c_void),
+            &mut info,
+            DIB_RGB_COLORS,
+        );
+
+        let _ = DeleteObject(hbmp.into());
+        ReleaseDC(None, screen);
+
+        if lines == 0 {
+            return None;
+        }
+
+        // BGRA -> RGBA
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        encode_png(&pixels, SIZE_PX as u32, SIZE_PX as u32)
+    }
+}
+
+#[cfg(not(windows))]
+fn shell_item_png(_path: &str) -> Option<Vec<u8>> {
+    None
 }
 
 #[cfg(windows)]

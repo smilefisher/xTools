@@ -476,6 +476,25 @@ pub fn run() {
         for (name, aumid) in apps.iter().take(15) {
             println!("  {name}  ←  {aumid}");
         }
+
+        // 图标自检：UWP 走 shell 命名空间取图
+        if let Some(dir) = crate::search::app_index::icon_cache_dir() {
+            let started = std::time::Instant::now();
+            let mut ok = 0;
+            let mut bytes = 0usize;
+            for (_, aumid) in apps.iter().take(8) {
+                let path = format!("shell:AppsFolder\\{aumid}");
+                if let Some(png) = crate::search::app_index::icon_png(&path, &dir) {
+                    ok += 1;
+                    bytes += png.len();
+                }
+            }
+            println!(
+                "UWP 图标：{ok}/8 提取成功，共 {} KB，用时 {:.1} ms",
+                bytes / 1024,
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         return;
     }
 
