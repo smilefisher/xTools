@@ -18,6 +18,9 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": {
+      "binaries/xtools-indexd.exe": "xtools-indexd.exe"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",

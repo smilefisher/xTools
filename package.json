@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
-    "dist": "tauri build",
+    "dist": "npm run prep:indexd && tauri build",
+    "prep:indexd": "node scripts/prepare-indexd.mjs",
     "notify": "node scripts/notify.mjs"
   },
   "dependencies": {

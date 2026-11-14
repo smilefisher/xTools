@@ -7,4 +7,5 @@ target/
 bench-latency.json
 *.log
 src-tauri/gen/
+src-tauri/binaries/
 .DS_Store

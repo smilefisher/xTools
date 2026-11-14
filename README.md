@@ -24,8 +24,10 @@ npm run typecheck  # 前端类型检查
 ## 安装包
 
 ```bash
-npm run dist       # 产物：target/release/bundle/nsis/xTools_0.1.0_x64-setup.exe（约 1.8MB）
+npm run dist       # 产物：target/release/bundle/nsis/xTools_0.1.0_x64-setup.exe（约 1.9MB）
 ```
+
+安装包内含两个文件：`xTools.exe`（主程序）与 `xtools-indexd.exe`（索引助手，可选启用）。
 
 - 用户级安装（`currentUser`），**不需要管理员**，默认装到 `%LOCALAPPDATA%\Programs\xTools`
 - 安装界面简体中文（内置简中 + 英文），卸载走「设置 → 应用」或安装目录的 `uninstall.exe`
