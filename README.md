@@ -45,6 +45,14 @@ xtools-indexd.exe --roots="D:\Projects"     # 不给参数则索引 %USERPROFILE
 - 以**管理员**身份运行时走 MFT 枚举（百万文件秒级），否则退回目录扫描
 - 协议：一行一个 JSON，`{"op":"ping"}` / `{"op":"search","query":"cargo","limit":20}`
 
+## 自检
+
+```bash
+xTools.exe --self-check     # 输出环境与各模块状态，并写入 %LOCALAPPDATA%\xtools\logs\self-check.txt
+```
+
+覆盖：管理员权限、索引服务/计划任务、开机自启、应用索引与查询延迟、文件索引（服务或本地缓存）、JSON 三件套、抓屏与剪贴板。
+
 ## 性能测量
 
 ```bash

@@ -261,6 +261,158 @@ fn probe_autostart() {
     }
 }
 
+/// `--self-check`：不带界面的自检，把环境与各模块状态写成一份报告。
+///
+/// 用户跑一条命令、把文件给我，就能定位「到底哪一环在环境上不通」。
+fn self_check() {
+    use std::fmt::Write as _;
+
+    let mut report = String::new();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let _ = writeln!(report, "xTools 自检报告（unix {now}）");
+    let _ = writeln!(report, "版本: {}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(report, "程序: {:?}", std::env::current_exe());
+    let _ = writeln!(
+        report,
+        "管理员权限: {}",
+        crate::search::app_index::is_elevated_process()
+    );
+    let _ = writeln!(
+        report,
+        "索引服务: {}",
+        match crate::search::service::ping() {
+            Some(entries) => format!("在线（{entries} 条）"),
+            None => "未运行".to_string(),
+        }
+    );
+    let _ = writeln!(
+        report,
+        "计划任务: {}",
+        if crate::service_install::task_exists() {
+            format!(
+                "已安装（{}）",
+                crate::service_install::current_run_level().unwrap_or_else(|| "未知".into())
+            )
+        } else {
+            "未安装".to_string()
+        }
+    );
+    let _ = writeln!(
+        report,
+        "开机自启: {}",
+        if crate::autostart::is_enabled() {
+            "已启用"
+        } else {
+            "未启用"
+        }
+    );
+
+    // 应用索引
+    let started = std::time::Instant::now();
+    let apps = crate::search::app_index::AppIndex::build();
+    let _ = writeln!(
+        report,
+        "\n[应用索引] {} 条，{:.1} ms",
+        apps.entries.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    let usage = std::collections::HashMap::new();
+    for query in ["wei", "qq", "code"] {
+        let started = std::time::Instant::now();
+        let hits = apps.search(query, 3, &usage);
+        let _ = writeln!(
+            report,
+            "  [{query}] {} 条 / {:.3} ms / 首条: {}",
+            hits.len(),
+            started.elapsed().as_secs_f64() * 1000.0,
+            hits.first().map(|h| h.name.clone()).unwrap_or_else(|| "-".into())
+        );
+    }
+
+    // 文件索引（服务优先，其次本地落盘缓存）
+    if let Some(entries) = crate::search::service::ping() {
+        let started = std::time::Instant::now();
+        let hits = crate::search::service::search("cargo", 5);
+        let _ = writeln!(
+            report,
+            "\n[文件索引] 走服务，{entries} 条；查询 cargo 返回 {} 条 / {:.2} ms",
+            hits.as_ref().map(|h| h.len()).unwrap_or(0),
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    } else {
+        let cache = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .map(|base| base.join("xtools").join("index").join("files.bin"));
+        match cache.as_deref().and_then(xtools_indexer::persist::load) {
+            Some((index, meta)) => {
+                let started = std::time::Instant::now();
+                let parsed = xtools_indexer::query::Query::parse("cargo");
+                let hits = xtools_indexer::query::search(&index, &parsed, 5);
+                let _ = writeln!(
+                    report,
+                    "\n[文件索引] 本地缓存 {} 条（{:.0} 分钟前）；查询 cargo 返回 {} 条 / {:.2} ms",
+                    index.len(),
+                    meta.age_secs() as f64 / 60.0,
+                    hits.len(),
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            None => {
+                let _ = writeln!(report, "\n[文件索引] 无服务、无缓存（首次启动会重建）");
+            }
+        }
+    }
+
+    // JSON
+    let sample = r#"{"b":[1,2],"a":"文本"}"#;
+    let formatted = crate::json::format(sample, "2", false);
+    let tree = crate::json::tree(sample, 100);
+    let queried = crate::json::query(sample, "$.b[1]");
+    let _ = writeln!(
+        report,
+        "\n[JSON] 格式化 {} / 树 {} 节点 / 查询 {} / 输出 {}",
+        if formatted.ok { "ok" } else { "fail" },
+        tree.nodes.len(),
+        if queried.ok { &queried.output } else { "fail" },
+        formatted.output.replace('\n', " ")
+    );
+
+    // 截图
+    match crate::capture::capture_rect(0, 0, 120, 80) {
+        Ok(frame) => {
+            let clip = frame.to_clipboard();
+            let _ = writeln!(
+                report,
+                "\n[截图] 抓屏 ok（{}x{}）；剪贴板 {}",
+                frame.width,
+                frame.height,
+                match clip {
+                    Ok(()) => "ok".to_string(),
+                    Err(err) => format!("失败（{err}）"),
+                }
+            );
+        }
+        Err(err) => {
+            let _ = writeln!(report, "\n[截图] 抓屏失败：{err}");
+        }
+    }
+
+    print!("{report}");
+
+    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+        let dir = std::path::PathBuf::from(base).join("xtools").join("logs");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("self-check.txt");
+        if std::fs::write(&path, &report).is_ok() {
+            println!("报告已写入：{}", path.display());
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|arg| arg == "--probe-apps") {
@@ -315,6 +467,11 @@ pub fn run() {
             Ok(message) => println!("{message}"),
             Err(err) => println!("卸载失败：{err}"),
         }
+        return;
+    }
+
+    if std::env::args().any(|arg| arg == "--self-check") {
+        self_check();
         return;
     }
 
