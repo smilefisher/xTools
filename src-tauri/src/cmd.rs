@@ -163,3 +163,47 @@ pub fn file_open(path: String) -> Result<(), String> {
 pub fn file_reveal(path: String) -> Result<(), String> {
     crate::search::file_index::reveal(&path)
 }
+
+// ---------------------------------------------------------------- 截图 / 贴图
+
+#[tauri::command]
+pub fn shot_rect() -> serde_json::Value {
+    match crate::shot::last_shot_rect() {
+        Some((x, y, width, height)) => serde_json::json!({
+            "x": x, "y": y, "width": width, "height": height
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
+#[tauri::command]
+pub fn shot_begin(app: AppHandle) -> serde_json::Value {
+    crate::shot::begin(&app).unwrap_or(serde_json::Value::Null)
+}
+
+#[tauri::command]
+pub fn shot_commit(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    pin: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    crate::shot::commit(&app, x, y, width, height, pin.unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn shot_cancel(app: AppHandle) {
+    crate::shot::cancel(&app);
+}
+
+#[tauri::command]
+pub fn pin_image(id: u32) -> tauri::ipc::Response {
+    tauri::ipc::Response::new(crate::shot::pin_bytes(id).unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn pin_close(app: AppHandle, id: u32) {
+    crate::shot::close_pin(&app, id);
+}

@@ -4,13 +4,21 @@ use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 pub fn register(app: &AppHandle, spec: &str) -> Result<(), String> {
-    let shortcut =
-        parse(spec).ok_or_else(|| format!("无法解析热键 '{spec}'（示例：alt+space / ctrl+shift+space）"))?;
+    register_action(app, spec, |app| crate::win::toggle_palette(app))
+}
+
+/// 注册一个自定义动作的热键（如截图）。
+pub fn register_action<F>(app: &AppHandle, spec: &str, action: F) -> Result<(), String>
+where
+    F: Fn(&AppHandle) + Send + Sync + 'static,
+{
+    let shortcut = parse(spec)
+        .ok_or_else(|| format!("无法解析热键 '{spec}'（示例：alt+space / ctrl+shift+space）"))?;
 
     app.global_shortcut()
         .on_shortcut(shortcut, move |app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
-                crate::win::toggle_palette(app);
+                action(app);
             }
         })
         .map_err(|e| format!("{e}"))

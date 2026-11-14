@@ -1,10 +1,12 @@
 //! xTools 主程序：常驻托盘 + 全局热键 + 预热面板窗口。
 
 mod bench;
+mod capture;
 mod cmd;
 mod hotkey;
 mod search;
 mod settings;
+mod shot;
 mod tray;
 mod win;
 
@@ -171,6 +173,69 @@ fn probe_mft() {
     }
 }
 
+/// `--probe-capture`：验证抓屏 → 裁剪 → PNG → 剪贴板，无需人工看屏幕。
+fn probe_capture() {
+    let started = std::time::Instant::now();
+    let frame = match capture::capture_rect(0, 0, 800, 600) {
+        Ok(frame) => frame,
+        Err(err) => {
+            println!("抓屏失败：{err}");
+            return;
+        }
+    };
+    println!(
+        "抓屏 800x600：{:.1} ms，{} KB",
+        started.elapsed().as_secs_f64() * 1000.0,
+        frame.bgra.len() / 1024
+    );
+
+    let started = std::time::Instant::now();
+    let cropped = frame.crop(100, 80, 320, 200);
+    match &cropped {
+        Some(crop) => println!(
+            "裁剪 320x200：{:.1} ms，结果 {}x{} @ ({},{})",
+            started.elapsed().as_secs_f64() * 1000.0,
+            crop.width,
+            crop.height,
+            crop.x,
+            crop.y
+        ),
+        None => println!("裁剪失败"),
+    }
+
+    let started = std::time::Instant::now();
+    let path = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default()
+        .join("xtools")
+        .join("shots")
+        .join("probe.png");
+    match &cropped {
+        Some(crop) => match crop.save_png(&path) {
+            Ok(()) => {
+                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                println!(
+                    "PNG 落盘：{:.1} ms，{} KB → {}",
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    size / 1024,
+                    path.display()
+                );
+            }
+            Err(err) => println!("PNG 落盘失败：{err}"),
+        },
+        None => {}
+    }
+
+    let started = std::time::Instant::now();
+    match &cropped {
+        Some(crop) => match crop.to_clipboard() {
+            Ok(()) => println!("写入剪贴板：{:.1} ms", started.elapsed().as_secs_f64() * 1000.0),
+            Err(err) => println!("剪贴板失败：{err}"),
+        },
+        None => {}
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|arg| arg == "--probe-apps") {
@@ -185,6 +250,11 @@ pub fn run() {
 
     if std::env::args().any(|arg| arg == "--probe-mft") {
         probe_mft();
+        return;
+    }
+
+    if std::env::args().any(|arg| arg == "--probe-capture") {
+        probe_capture();
         return;
     }
 
@@ -209,6 +279,12 @@ pub fn run() {
             cmd::file_status,
             cmd::file_open,
             cmd::file_reveal,
+            cmd::shot_rect,
+            cmd::shot_begin,
+            cmd::shot_commit,
+            cmd::shot_cancel,
+            cmd::pin_image,
+            cmd::pin_close,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -241,9 +317,40 @@ pub fn run() {
                 }
             }
 
+            if let Err(err) = hotkey::register_action(&handle, "alt+shift+a", |app| {
+                crate::shot::toggle(app);
+            }) {
+                eprintln!("[hotkey] 截图热键注册失败：{err}");
+            } else {
+                eprintln!("[boot] 截图热键 Alt+Shift+A 就绪");
+            }
+
             bench::maybe_start(&handle);
             if let Some(text) = bench::ui_probe_arg() {
                 bench::start_ui_probe(&handle, text);
+            }
+            if std::env::args().any(|arg| arg == "--probe-shot") {
+                let app = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
+                    let rect = crate::shot::begin(&app);
+                    eprintln!("[probe-shot] 覆盖窗：{rect:?}");
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    let (x, y) = rect
+                        .as_ref()
+                        .and_then(|v| {
+                            Some((v.get("x")?.as_i64()? as i32, v.get("y")?.as_i64()? as i32))
+                        })
+                        .unwrap_or((0, 0));
+                    let started = std::time::Instant::now();
+                    let result = crate::shot::commit(&app, x + 100, y + 100, 320, 200, true);
+                    eprintln!(
+                        "[probe-shot] commit 结果：{result:?}，用时 {:.0} ms",
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    app.exit(0);
+                });
             }
             Ok(())
         })
@@ -254,7 +361,10 @@ pub fn run() {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Focused(false) => {
-                if !bench::is_running() && !win::autohide_disabled() {
+                if window.label() == MAIN_LABEL
+                    && !bench::is_running()
+                    && !win::autohide_disabled()
+                {
                     let _ = window.hide();
                 }
             }
