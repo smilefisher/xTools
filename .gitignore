@@ -1,0 +1,10 @@
+.secrets/
+node_modules/
+dist/
+target/
+.cache/
+.tmp/
+bench-latency.json
+*.log
+src-tauri/gen/
+.DS_Store
