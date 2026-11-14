@@ -158,7 +158,8 @@ fn probe_mft() {
                     records.len(),
                     started.elapsed().as_secs_f64()
                 );
-                let (index, dupes) = usn::build_from_records(&format!("{volume}:"), records);
+                let (mft, dupes) = usn::build_from_records(&format!("{volume}:"), records);
+                let index = mft.index;
                 println!(
                     "组装索引 {} 条（去重 {dupes}），用时 {:.2}s，内存 {:.1}MB",
                     index.len(),

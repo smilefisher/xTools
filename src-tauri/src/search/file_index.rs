@@ -3,9 +3,10 @@
 //! 当前版本用目录遍历建索引（无需管理员），落盘后下次启动直接加载。
 //! MFT/USN 的提权索引服务作为下一阶段接入，接口保持不变。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use xtools_indexer::query::{self, Hit};
 use xtools_indexer::{build_walk, persist, Index};
@@ -49,7 +50,7 @@ impl FileState {
             .ok();
     }
 
-    fn load_or_build(&self) {
+    fn load_or_build(self: &Arc<Self>) {
         let cache = index_path();
         let root_labels: Vec<String> = self
             .roots
@@ -92,18 +93,30 @@ impl FileState {
         self.ready.store(true, Ordering::Relaxed);
     }
 
-    fn build(&self) -> Index {
+    fn build(self: &Arc<Self>) -> Index {
         // 有管理员权限时优先走 MFT 枚举（秒级），否则退回目录遍历
         if xtools_indexer::usn::is_elevated() {
             if let Some(volume) = xtools_indexer::profile_volume() {
-                match xtools_indexer::build_usn(&[volume]) {
-                    Ok((index, stats)) => {
+                match xtools_indexer::usn::enumerate_volume(volume) {
+                    Ok(records) => {
+                        let started = std::time::Instant::now();
+                        let raw = records.len();
+                        let (mft, duplicates) =
+                            xtools_indexer::usn::build_from_records(&format!("{volume}:"), records);
+                        let index = mft.index;
                         eprintln!(
-                            "[file] MFT 索引 {} 条，用时 {:.1}s，内存 {:.1}MB",
-                            stats.entries,
-                            stats.elapsed_ms / 1000.0,
-                            stats.bytes as f64 / 1048576.0
+                            "[file] MFT 索引 {} 条（原始 {raw}，去重 {duplicates}），用时 {:.1}s",
+                            index.len(),
+                            started.elapsed().as_secs_f64()
                         );
+
+                        // 起监听线程：USN 日志增量刷新内存索引
+                        match xtools_indexer::usn::journal::open(volume) {
+                            Ok(info) => {
+                                self.spawn_watcher(volume, info.id, info.next_usn, mft.frn_to_idx);
+                            }
+                            Err(err) => eprintln!("[file] 打开 USN 日志失败：{err}"),
+                        }
                         return index;
                     }
                     Err(err) => eprintln!("[file] MFT 枚举失败（{err}），回退目录扫描"),
@@ -119,6 +132,56 @@ impl FileState {
             stats.bytes as f64 / 1048576.0
         );
         index
+    }
+
+    /// 增量监听：每 500ms 读一次 USN 日志，把 create/rename/delete 应用到内存索引。
+    fn spawn_watcher(
+        self: &Arc<Self>,
+        volume: char,
+        journal_id: u64,
+        start_usn: i64,
+        frn_to_idx: HashMap<u64, u32>,
+    ) {
+        let me = Arc::clone(self);
+        let state = Arc::new(Mutex::new((frn_to_idx, start_usn)));
+
+        std::thread::Builder::new()
+            .name("xtools-usn-watch".into())
+            .spawn(move || {
+                eprintln!("[file] USN 增量监听已启动（{volume}:）");
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let since = state.lock().unwrap().1;
+                    let (changes, next) =
+                        match xtools_indexer::usn::journal::read(volume, journal_id, since) {
+                            Ok(result) => result,
+                            Err(err) => {
+                                eprintln!("[file] 读取 USN 失败：{err}");
+                                std::thread::sleep(std::time::Duration::from_secs(5));
+                                continue;
+                            }
+                        };
+                    if changes.is_empty() {
+                        continue;
+                    }
+
+                    let mut guard = state.lock().unwrap();
+                    let map = &mut guard.0;
+                    if let Ok(mut index_guard) = me.index.write() {
+                        if let Some(index) = index_guard.as_mut() {
+                            let (added, removed) =
+                                xtools_indexer::usn::apply_changes_split(index, map, &changes);
+                            if added > 0 || removed > 0 {
+                                if crate::debug_on() {
+                                    eprintln!("[file] 增量 +{added} -{removed}");
+                                }
+                            }
+                        }
+                    }
+                    guard.1 = next;
+                }
+            })
+            .ok();
     }
 
     pub fn search(&self, text: &str, limit: usize) -> Vec<Hit> {

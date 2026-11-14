@@ -100,6 +100,10 @@ pub fn search(index: &Index, query: &Query, limit: usize) -> Vec<Hit> {
         .fold(
             || BinaryHeap::with_capacity(keep + 1),
             |mut heap, (i, entry)| {
+                // 墓碑条目（增量删除）不参与匹配
+                if entry.name_len == 0 {
+                    return heap;
+                }
                 let name = &names
                     [entry.name_off as usize..entry.name_off as usize + entry.name_len as usize];
                 if let Some(score) = score_entry(name, terms) {

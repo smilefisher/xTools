@@ -131,7 +131,8 @@ pub fn build_usn(volumes: &[char]) -> std::io::Result<(Index, BuildStats)> {
     for &volume in volumes {
         let records = usn::enumerate_volume(volume)?;
         let raw_count = records.len();
-        let (part, duplicates) = usn::build_from_records(&format!("{volume}:"), records);
+        let (mft, duplicates) = usn::build_from_records(&format!("{volume}:"), records);
+        let part = mft.index;
         eprintln!(
             "[mft] {volume}: 记录 {raw_count} 条，去重 {duplicates} 条，入索引 {} 条",
             part.len()
