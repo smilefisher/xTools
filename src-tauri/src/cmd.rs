@@ -207,3 +207,44 @@ pub fn pin_image(id: u32) -> tauri::ipc::Response {
 pub fn pin_close(app: AppHandle, id: u32) {
     crate::shot::close_pin(&app, id);
 }
+
+// ---------------------------------------------------------------- JSON 工具
+
+#[tauri::command]
+pub fn json_format(
+    text: String,
+    indent: Option<String>,
+    sort_keys: Option<bool>,
+) -> crate::json::JsonResult {
+    crate::json::format(&text, indent.as_deref().unwrap_or("2"), sort_keys.unwrap_or(false))
+}
+
+#[tauri::command]
+pub fn json_minify(text: String) -> crate::json::JsonResult {
+    crate::json::minify(&text)
+}
+
+#[tauri::command]
+pub fn json_validate(text: String) -> crate::json::JsonResult {
+    crate::json::validate(&text)
+}
+
+#[tauri::command]
+pub fn json_query(text: String, path: String) -> crate::json::JsonResult {
+    crate::json::query(&text, &path)
+}
+
+#[tauri::command]
+pub fn json_open(app: AppHandle, text: Option<String>) -> Result<(), String> {
+    crate::shot::open_json(&app, text)
+}
+
+#[tauri::command]
+pub fn json_close(app: AppHandle) {
+    crate::shot::close_json(&app);
+}
+
+#[tauri::command]
+pub fn json_take_pending() -> Option<String> {
+    crate::shot::take_pending_json()
+}

@@ -4,6 +4,7 @@ mod bench;
 mod capture;
 mod cmd;
 mod hotkey;
+mod json;
 mod search;
 mod settings;
 mod shot;
@@ -285,6 +286,13 @@ pub fn run() {
             cmd::shot_cancel,
             cmd::pin_image,
             cmd::pin_close,
+            cmd::json_format,
+            cmd::json_minify,
+            cmd::json_validate,
+            cmd::json_query,
+            cmd::json_open,
+            cmd::json_close,
+            cmd::json_take_pending,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -349,6 +357,20 @@ pub fn run() {
                         started.elapsed().as_secs_f64() * 1000.0
                     );
                     std::thread::sleep(std::time::Duration::from_millis(1500));
+                    app.exit(0);
+                });
+            }
+
+            if std::env::args().any(|arg| arg == "--probe-json") {
+                let app = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(2000));
+                    let sample = r#"{"b":[1,2,{"c":true}],"a":"文本"}"#;
+                    match crate::shot::open_json(&app, Some(sample.to_string())) {
+                        Ok(()) => eprintln!("[probe-json] 已打开 JSON 窗口"),
+                        Err(err) => eprintln!("[probe-json] 打开失败：{err}"),
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
                     app.exit(0);
                 });
             }

@@ -232,3 +232,49 @@ pub fn close_pin(app: &AppHandle, id: u32) {
     }
     pins().lock().ok().map(|mut map| map.remove(&id));
 }
+
+// ---------------------------------------------------------------- JSON 窗口
+
+pub const JSON_LABEL: &str = "json";
+
+static PENDING_JSON: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn pending_json() -> &'static Mutex<Option<String>> {
+    PENDING_JSON.get_or_init(|| Mutex::new(None))
+}
+
+/// 打开（或聚焦）JSON 工具窗口，可附带一段初始内容。
+pub fn open_json(app: &AppHandle, text: Option<String>) -> Result<(), String> {
+    if let Some(text) = text.clone() {
+        *pending_json().lock().unwrap() = Some(text);
+    }
+
+    if let Some(window) = app.get_webview_window(JSON_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        if let Some(text) = text {
+            let _ = window.emit("json:set", text);
+        }
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(app, JSON_LABEL, WebviewUrl::App("index.html#json".into()))
+        .title("xTools · JSON")
+        .inner_size(960.0, 640.0)
+        .min_inner_size(480.0, 320.0)
+        .center()
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 前端挂载后取走待处理内容（首次开窗时事件可能早于监听）。
+pub fn take_pending_json() -> Option<String> {
+    pending_json().lock().ok()?.take()
+}
+
+pub fn close_json(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(JSON_LABEL) {
+        let _ = window.hide();
+    }
+}

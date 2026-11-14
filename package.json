@@ -16,7 +16,10 @@
     "notify": "node scripts/notify.mjs"
   },
   "dependencies": {
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/theme-one-dark": "^6.1.3",
     "@tauri-apps/api": "^2",
+    "codemirror": "^6.0.2",
     "solid-js": "^1.9.3"
   },
   "devDependencies": {

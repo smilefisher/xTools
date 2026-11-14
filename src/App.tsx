@@ -15,7 +15,10 @@ type FileHit = {
 };
 type FileStatus = { ready: boolean; entries: number };
 
-type Row = { kind: "app"; hit: AppHit } | { kind: "file"; hit: FileHit };
+type Row =
+  | { kind: "app"; hit: AppHit }
+  | { kind: "file"; hit: FileHit }
+  | { kind: "json"; text: string };
 
 export default function App() {
   const [query, setQuery] = createSignal("");
@@ -32,7 +35,15 @@ export default function App() {
   let toastTimer: number | undefined;
   const token = { current: 0 };
 
+  const jsonIntent = createMemo<string | null>(() => {
+    const q = query().trim();
+    if (q.startsWith("{") || q.startsWith("[")) return q;
+    if (q === "json") return "";
+    return null;
+  });
+
   const rows = createMemo<Row[]>(() => [
+    ...(jsonIntent() !== null ? [{ kind: "json" as const, text: jsonIntent()! }] : []),
     ...apps().map((hit) => ({ kind: "app" as const, hit })),
     ...files().map((hit) => ({ kind: "file" as const, hit })),
   ]);
@@ -94,7 +105,9 @@ export default function App() {
     if (!row) return;
     void invoke("hide_palette");
     try {
-      if (row.kind === "app") {
+      if (row.kind === "json") {
+        await invoke("json_open", { text: row.text || null });
+      } else if (row.kind === "app") {
         await invoke("app_launch", { id: row.hit.id });
       } else if (reveal) {
         await invoke("file_reveal", { path: row.hit.path });
@@ -249,7 +262,29 @@ export default function App() {
       </div>
 
       <div class="list">
-        <For each={apps()}>{(item, index) => renderApp(item, index())}</For>
+        <Show when={jsonIntent() !== null}>
+          <div
+            class="row"
+            classList={{ active: selected() === 0 }}
+            onMouseEnter={() => setSelected(0)}
+            onClick={() => void activate({ kind: "json", text: jsonIntent() ?? "" })}
+          >
+            <span class="icon letter">{"{}"}</span>
+            <span class="text">
+              <span class="title">在 JSON 工具中打开</span>
+              <span class="desc">
+                {jsonIntent()?.trim() ? "把这段内容带进编辑器" : "打开空编辑器"}
+              </span>
+            </span>
+            <Show when={selected() === 0}>
+              <span class="tag">↵</span>
+            </Show>
+          </div>
+        </Show>
+
+        <For each={apps()}>
+          {(item, index) => renderApp(item, index() + (jsonIntent() !== null ? 1 : 0))}
+        </For>
 
         <Show when={files().length > 0}>
           <div class="section">
@@ -261,7 +296,12 @@ export default function App() {
             </span>
           </div>
           <For each={files()}>
-            {(item, index) => renderFile(item, apps().length + index())}
+            {(item, index) =>
+              renderFile(
+                item,
+                (jsonIntent() !== null ? 1 : 0) + apps().length + index(),
+              )
+            }
           </For>
         </Show>
 
