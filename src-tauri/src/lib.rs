@@ -15,6 +15,8 @@ mod win;
 
 pub const MAIN_LABEL: &str = "main";
 
+use tauri::Manager;
+
 /// 开发期调试日志开关（XTOOLS_DEBUG=1）。
 pub fn debug_on() -> bool {
     std::env::var_os("XTOOLS_DEBUG").is_some()
@@ -405,7 +407,22 @@ pub fn run() {
                         "[probe-shot] commit 结果：{result:?}，用时 {:.0} ms",
                         started.elapsed().as_secs_f64() * 1000.0
                     );
-                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    std::thread::sleep(std::time::Duration::from_millis(1200));
+                    // 贴图窗缩放自检：读尺寸 → 放大 1.5 倍 → 再读
+                    if let Ok(value) = &result {
+                        if let Some(id) = value.get("pin").and_then(|v| v.as_u64()) {
+                            if let Some(window) = app.get_webview_window(&format!("pin-{id}")) {
+                                let before = window.inner_size().ok();
+                                let zoomed = crate::shot::zoom_pin(&app, id as u32, 1.5);
+                                std::thread::sleep(std::time::Duration::from_millis(300));
+                                let after = window.inner_size().ok();
+                                eprintln!(
+                                    "[probe-shot] 贴图缩放 {before:?} ×1.5 → {after:?}（{zoomed:?}）"
+                                );
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
                     app.exit(0);
                 });
             }

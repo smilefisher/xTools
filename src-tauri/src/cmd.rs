@@ -254,6 +254,16 @@ pub fn pin_close(app: AppHandle, id: u32) {
     crate::shot::close_pin(&app, id);
 }
 
+#[tauri::command]
+pub fn pin_zoom(app: AppHandle, id: u32, factor: f64) -> Result<(), String> {
+    crate::shot::zoom_pin(&app, id, factor)
+}
+
+#[tauri::command]
+pub fn pin_copy(id: u32) -> Result<(), String> {
+    crate::shot::copy_pin(id)
+}
+
 // ---------------------------------------------------------------- JSON 工具
 
 #[tauri::command]

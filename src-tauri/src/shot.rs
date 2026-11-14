@@ -231,6 +231,47 @@ pub fn pin_bytes(id: u32) -> Option<Vec<u8>> {
     pins().lock().ok()?.get(&id).cloned()
 }
 
+/// 缩放贴图窗：按比例改窗口尺寸，内容跟着缩放。
+pub fn zoom_pin(app: &AppHandle, id: u32, factor: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window(&format!("pin-{id}"))
+        .ok_or_else(|| "贴图窗口不存在".to_string())?;
+
+    let size = window.inner_size().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let logical = size.to_logical::<f64>(scale);
+    let factor = factor.clamp(0.25, 4.0);
+
+    let width = (logical.width * factor).clamp(48.0, 4000.0);
+    let height = (logical.height * factor).clamp(48.0, 4000.0);
+
+    window
+        .set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)))
+        .map_err(|e| e.to_string())
+}
+
+/// 把贴图重新塞回剪贴板（右键菜单「复制」）。
+pub fn copy_pin(id: u32) -> Result<(), String> {
+    let png = pin_bytes(id).ok_or_else(|| "贴图数据不存在".to_string())?;
+    let image = image::load_from_memory(&png).map_err(|e| e.to_string())?;
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+
+    let mut bgra = rgba.into_raw();
+    for px in bgra.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+
+    let frame = capture::Frame {
+        x: 0,
+        y: 0,
+        width,
+        height,
+        bgra,
+    };
+    frame.to_clipboard()
+}
+
 pub fn close_pin(app: &AppHandle, id: u32) {
     if let Some(window) = app.get_webview_window(&format!("pin-{id}")) {
         let _ = window.close();
