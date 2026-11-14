@@ -138,6 +138,39 @@ fn probe_files(root: String) {
     }
 }
 
+/// `--probe-mft`：验证 MFT 枚举是否可用（需要管理员），并对比目录扫描。
+fn probe_mft() {
+    use xtools_indexer::usn;
+
+    println!("管理员权限：{}", usn::is_elevated());
+    println!("可索引固定卷：{:?}", usn::fixed_volumes());
+    println!("用户目录所在卷：{:?}", xtools_indexer::profile_volume());
+
+    if let Some(volume) = xtools_indexer::profile_volume() {
+        let started = std::time::Instant::now();
+        match usn::enumerate_volume(volume) {
+            Ok(records) => {
+                println!(
+                    "MFT 枚举 {volume}: 记录 {} 条，用时 {:.2}s",
+                    records.len(),
+                    started.elapsed().as_secs_f64()
+                );
+                let (index, dupes) = usn::build_from_records(&format!("{volume}:"), records);
+                println!(
+                    "组装索引 {} 条（去重 {dupes}），用时 {:.2}s，内存 {:.1}MB",
+                    index.len(),
+                    started.elapsed().as_secs_f64(),
+                    index.memory_bytes() as f64 / 1048576.0
+                );
+            }
+            Err(err) => {
+                println!("MFT 枚举失败（预期需要管理员）：{err}");
+                println!("→ 实际运行时会自动回退到目录扫描");
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|arg| arg == "--probe-apps") {
@@ -147,6 +180,11 @@ pub fn run() {
 
     if let Some(root) = file_probe_arg() {
         probe_files(root);
+        return;
+    }
+
+    if std::env::args().any(|arg| arg == "--probe-mft") {
+        probe_mft();
         return;
     }
 

@@ -73,13 +73,7 @@ impl FileState {
             }
         }
 
-        let (index, stats) = build_walk(&self.roots);
-        eprintln!(
-            "[file] 构建索引 {} 条，用时 {:.1}s，内存 {:.1}MB",
-            stats.entries,
-            stats.elapsed_ms / 1000.0,
-            stats.bytes as f64 / 1048576.0
-        );
+        let index = self.build();
 
         if let Some(path) = cache.as_deref() {
             let meta = persist::IndexMeta {
@@ -96,6 +90,35 @@ impl FileState {
             *guard = Some(index);
         }
         self.ready.store(true, Ordering::Relaxed);
+    }
+
+    fn build(&self) -> Index {
+        // 有管理员权限时优先走 MFT 枚举（秒级），否则退回目录遍历
+        if xtools_indexer::usn::is_elevated() {
+            if let Some(volume) = xtools_indexer::profile_volume() {
+                match xtools_indexer::build_usn(&[volume]) {
+                    Ok((index, stats)) => {
+                        eprintln!(
+                            "[file] MFT 索引 {} 条，用时 {:.1}s，内存 {:.1}MB",
+                            stats.entries,
+                            stats.elapsed_ms / 1000.0,
+                            stats.bytes as f64 / 1048576.0
+                        );
+                        return index;
+                    }
+                    Err(err) => eprintln!("[file] MFT 枚举失败（{err}），回退目录扫描"),
+                }
+            }
+        }
+
+        let (index, stats) = build_walk(&self.roots);
+        eprintln!(
+            "[file] 目录扫描索引 {} 条，用时 {:.1}s，内存 {:.1}MB",
+            stats.entries,
+            stats.elapsed_ms / 1000.0,
+            stats.bytes as f64 / 1048576.0
+        );
+        index
     }
 
     pub fn search(&self, text: &str, limit: usize) -> Vec<Hit> {

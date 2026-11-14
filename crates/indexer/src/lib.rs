@@ -11,6 +11,7 @@
 
 pub mod persist;
 pub mod query;
+pub mod usn;
 
 use std::path::{Path, PathBuf};
 
@@ -86,6 +87,25 @@ impl Index {
         self.names.capacity() + self.entries.capacity() * std::mem::size_of::<Entry>()
     }
 
+    /// 把另一个索引并入当前索引，自动修正父下标与名字偏移。
+    pub fn append(&mut self, other: Index) {
+        let entry_base = self.entries.len() as u32;
+        let name_base = self.names.len() as u32;
+        for entry in other.entries {
+            let parent = if entry.parent == NO_PARENT {
+                NO_PARENT
+            } else {
+                entry.parent + entry_base
+            };
+            self.entries.push(Entry {
+                parent,
+                name_off: entry.name_off + name_base,
+                ..entry
+            });
+        }
+        self.names.extend_from_slice(&other.names);
+    }
+
     fn push(&mut self, parent: u32, name: &str, is_dir: bool, size: u64, mtime: u64) -> u32 {
         let offset = self.names.len() as u32;
         self.names.extend_from_slice(name.as_bytes());
@@ -100,6 +120,36 @@ impl Index {
         });
         idx
     }
+}
+
+/// 用 MFT 枚举快速建索引（需要管理员）。任一环节失败都返回错误，由调用方降级。
+pub fn build_usn(volumes: &[char]) -> std::io::Result<(Index, BuildStats)> {
+    let started = std::time::Instant::now();
+    let mut stats = BuildStats::default();
+    let mut index = Index::default();
+
+    for &volume in volumes {
+        let records = usn::enumerate_volume(volume)?;
+        let raw_count = records.len();
+        let (part, duplicates) = usn::build_from_records(&format!("{volume}:"), records);
+        eprintln!(
+            "[mft] {volume}: 记录 {raw_count} 条，去重 {duplicates} 条，入索引 {} 条",
+            part.len()
+        );
+        stats.bytes += part.memory_bytes();
+        index.append(part);
+    }
+
+    stats.entries = index.len();
+    stats.bytes = index.memory_bytes();
+    stats.elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    Ok((index, stats))
+}
+
+/// `%USERPROFILE%` 所在的卷盘符。
+pub fn profile_volume() -> Option<char> {
+    let profile = std::env::var("USERPROFILE").ok()?;
+    profile.chars().next().filter(|c| c.is_ascii_alphabetic())
 }
 
 /// 目录遍历建索引（无需管理员）。
