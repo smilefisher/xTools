@@ -81,6 +81,34 @@ fn read_u64(buffer: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(buffer[offset..offset + 8].try_into().unwrap_or([0; 8]))
 }
 
+/// 校验枚举结果是否像模像样。
+///
+/// 解析偏移一旦对不上（不同 Windows 版本 / 结构体差异），名字会变成乱码或空串。
+/// 与其把垃圾数据灌进索引，不如检测出来直接回退到目录扫描。
+pub fn looks_sane(records: &[RawRecord]) -> bool {
+    if records.is_empty() {
+        return false;
+    }
+    let sample = &records[..records.len().min(10_000)];
+    let mut suspicious = 0usize;
+
+    for record in sample {
+        let name = &record.name;
+        let bad = name.is_empty()
+            || name.len() > 255
+            || name.contains('\u{FFFD}')
+            || name.chars().any(|c| c.is_control())
+            || record.frn == 0
+            || record.parent == 0;
+        if bad {
+            suspicious += 1;
+        }
+    }
+
+    // 大量记录可疑就别用了，正常枚举里这类记录应该接近 0
+    suspicious * 20 < sample.len()
+}
+
 /// MFT 枚举结果：索引本体 + FRN 到下标的映射（增量更新要用）。
 pub struct MftIndex {
     pub index: Index,
@@ -677,6 +705,31 @@ mod tests {
         assert_eq!((added, removed), (0, 1));
         assert_eq!(mft.index.entries[1].name_len, 0);
         assert!(!mft.frn_to_idx.contains_key(&11));
+    }
+
+    #[test]
+    fn sanity_check_rejects_garbage() {
+        let good: Vec<RawRecord> = (0..100)
+            .map(|i| RawRecord {
+                frn: i as u64 + 10,
+                parent: 5,
+                name: format!("file{i}.txt"),
+                is_dir: false,
+            })
+            .collect();
+        assert!(looks_sane(&good));
+
+        let garbage: Vec<RawRecord> = (0..100)
+            .map(|i| RawRecord {
+                frn: i as u64 + 10,
+                parent: 5,
+                name: String::new(),
+                is_dir: false,
+            })
+            .collect();
+        assert!(!looks_sane(&garbage));
+
+        assert!(!looks_sane(&[]));
     }
 
     #[test]

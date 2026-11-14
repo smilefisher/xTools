@@ -99,6 +99,13 @@ impl FileState {
             if let Some(volume) = xtools_indexer::profile_volume() {
                 match xtools_indexer::usn::enumerate_volume(volume) {
                     Ok(records) => {
+                        if !xtools_indexer::usn::looks_sane(&records) {
+                            eprintln!(
+                                "[file] MFT 枚举结果异常（{} 条），放弃并回退目录扫描",
+                                records.len()
+                            );
+                            return self.build_by_walk();
+                        }
                         let started = std::time::Instant::now();
                         let raw = records.len();
                         let (mft, duplicates) =
@@ -124,6 +131,17 @@ impl FileState {
             }
         }
 
+        let (index, stats) = build_walk(&self.roots);
+        eprintln!(
+            "[file] 目录扫描索引 {} 条，用时 {:.1}s，内存 {:.1}MB",
+            stats.entries,
+            stats.elapsed_ms / 1000.0,
+            stats.bytes as f64 / 1048576.0
+        );
+        index
+    }
+
+    fn build_by_walk(&self) -> Index {
         let (index, stats) = build_walk(&self.roots);
         eprintln!(
             "[file] 目录扫描索引 {} 条，用时 {:.1}s，内存 {:.1}MB",
