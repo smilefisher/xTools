@@ -5,6 +5,7 @@ mod capture;
 mod cmd;
 mod annotate;
 mod autostart;
+mod service_install;
 mod hotkey;
 mod json;
 mod search;
@@ -284,6 +285,36 @@ pub fn run() {
 
     if std::env::args().any(|arg| arg == "--probe-autostart") {
         probe_autostart();
+        return;
+    }
+
+    if std::env::args().any(|arg| arg == "--install-index-service") {
+        let elevated = crate::search::app_index::is_elevated_process();
+        if !elevated {
+            println!("安装索引服务需要管理员权限（计划任务写入系统任务库）。");
+            println!("请用管理员身份运行，或双击 scripts\\install-service.cmd（会自动申请提权）。");
+            return;
+        }
+        match service_install::install(true) {
+            Ok(message) => println!("{message}"),
+            Err(err) => println!("安装失败：{err}"),
+        }
+        println!(
+            "任务状态：{}",
+            if service_install::task_exists() {
+                "已存在"
+            } else {
+                "不存在"
+            }
+        );
+        return;
+    }
+
+    if std::env::args().any(|arg| arg == "--uninstall-index-service") {
+        match service_install::uninstall() {
+            Ok(message) => println!("{message}"),
+            Err(err) => println!("卸载失败：{err}"),
+        }
         return;
     }
 

@@ -349,6 +349,41 @@ fn fnv1a(bytes: &[u8]) -> u32 {
 
 // ---------------------------------------------------------------- 启动
 
+/// 当前进程是否有管理员权限（安装计划任务时用）。
+pub fn is_elevated_process() -> bool {
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Security::{
+            GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        };
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        unsafe {
+            let mut token = windows::Win32::Foundation::HANDLE::default();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+                return false;
+            }
+            let mut elevation = TOKEN_ELEVATION::default();
+            let mut size = 0u32;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(&mut elevation as *mut _ as *mut c_void),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut size,
+            );
+            let _ = CloseHandle(token);
+            ok.is_ok() && elevation.TokenIsElevated != 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 pub fn launch(path: &str, run_as_admin: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
