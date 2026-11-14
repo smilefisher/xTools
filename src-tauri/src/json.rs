@@ -120,17 +120,40 @@ pub fn validate(text: &str) -> JsonResult {
     let input_bytes = text.len();
     let elapsed = || started.elapsed().as_secs_f64() * 1000.0;
 
-    match parse(text) {
-        Ok(value) => {
-            let summary = format!(
-                "合法 JSON · 根类型 {} · 体积 {}",
-                type_name(&value),
-                human_size(input_bytes)
-            );
-            ok_result(summary, elapsed(), input_bytes)
+    // 校验走流式解析（IgnoredAny），不建整棵 Value 树：
+    // 100MB 的文档也能校验，内存只占解析缓冲区。
+    let mut stream = serde_json::Deserializer::from_str(text).into_iter::<serde::de::IgnoredAny>();
+    let mut documents = 0usize;
+    let mut failure = None;
+
+    for item in stream.by_ref() {
+        match item {
+            Ok(_) => documents += 1,
+            Err(err) => {
+                failure = Some(JsonError::from_serde(&err));
+                break;
+            }
         }
-        Err(err) => err_result(err, elapsed(), input_bytes),
     }
+
+    if let Some(err) = failure {
+        return err_result(err, elapsed(), input_bytes);
+    }
+
+    if documents == 0 {
+        return err_result(
+            JsonError::plain("没有解析到任何 JSON 内容"),
+            elapsed(),
+            input_bytes,
+        );
+    }
+
+    let summary = format!(
+        "合法 JSON · {} 个顶层文档 · 体积 {} · 流式校验",
+        documents,
+        human_size(input_bytes)
+    );
+    ok_result(summary, elapsed(), input_bytes)
 }
 
 /// JSONPath 子集：`$.a.b[0]`、`$.list[*].name`、`$..key`（递归找键）。
@@ -510,6 +533,33 @@ fn preview_of(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_handles_large_documents() {
+        // 约 6MB：整树解析会很慢，流式校验应当很快且成功
+        let mut doc = String::with_capacity(6 << 20);
+        doc.push('[');
+        for i in 0..200_000 {
+            if i > 0 {
+                doc.push(',');
+            }
+            doc.push_str(&format!("{{\"i\":{i},\"s\":\"value-{i}\"}}"));
+        }
+        doc.push(']');
+
+        let result = validate(&doc);
+        assert!(result.ok, "校验失败：{:?}", result.error);
+        assert!(result.output.contains("1 个顶层文档"));
+        // 6MB 流式校验应在 1 秒内
+        assert!(result.elapsed_ms < 1000.0, "耗时异常：{}", result.elapsed_ms);
+    }
+
+    #[test]
+    fn validate_rejects_broken_stream() {
+        let result = validate("{\"a\":1} {\"b\":");
+        assert!(!result.ok);
+        assert!(result.error.is_some());
+    }
 
     #[test]
     fn tree_flattens_with_paths() {
