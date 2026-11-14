@@ -1,15 +1,17 @@
 //! 暴露给前端的命令。前端只做渲染与输入，窗口/热键等动作一律回落 Rust。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, State};
 
 use crate::search::app_index::{AppHit, AppIndex, UsageStore};
+use crate::search::file_index::FileState;
 use crate::settings::{self, Settings};
 
 pub struct AppState {
     pub index: Mutex<AppIndex>,
     pub usage: Mutex<UsageStore>,
+    pub files: Arc<FileState>,
 }
 
 impl AppState {
@@ -20,9 +22,14 @@ impl AppState {
             index.entries.len(),
             index.built_ms
         );
+
+        let files = Arc::new(FileState::new());
+        files.start();
+
         Self {
             index: Mutex::new(index),
             usage: Mutex::new(UsageStore::load()),
+            files,
         }
     }
 }
@@ -117,4 +124,42 @@ pub fn app_icon(state: State<'_, AppState>, id: u32) -> tauri::ipc::Response {
         })
         .unwrap_or_default();
     tauri::ipc::Response::new(png)
+}
+
+// ---------------------------------------------------------------- 文件搜索
+
+#[tauri::command]
+pub fn file_search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Vec<xtools_indexer::query::Hit> {
+    let started = std::time::Instant::now();
+    let hits = state.files.search(&query, limit.unwrap_or(20));
+    if crate::debug_on() {
+        eprintln!(
+            "[file] query={query:?} hits={} {:.3}ms",
+            hits.len(),
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    hits
+}
+
+#[tauri::command]
+pub fn file_status(state: State<'_, AppState>) -> serde_json::Value {
+    serde_json::json!({
+        "ready": state.files.is_ready(),
+        "entries": state.files.entry_count(),
+    })
+}
+
+#[tauri::command]
+pub fn file_open(path: String) -> Result<(), String> {
+    crate::search::app_index::launch(&path, false)
+}
+
+#[tauri::command]
+pub fn file_reveal(path: String) -> Result<(), String> {
+    crate::search::file_index::reveal(&path)
 }

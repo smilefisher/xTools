@@ -56,10 +56,97 @@ fn probe_apps() {
     }
 }
 
+/// `--probe-files` / `--probe-files=<路径>`：验证文件索引与查询引擎。
+fn file_probe_arg() -> Option<String> {
+    for arg in std::env::args() {
+        if arg == "--probe-files" {
+            return Some(
+                std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string()),
+            );
+        }
+        if let Some(root) = arg.strip_prefix("--probe-files=") {
+            return Some(root.to_string());
+        }
+    }
+    None
+}
+
+fn probe_files(root: String) {
+    use xtools_indexer::{build_walk, persist, query};
+
+    // 优先复用落盘索引：验证「加载」路径的真实耗时
+    let cache = std::env::var_os("LOCALAPPDATA")
+        .map(|base| {
+            std::path::PathBuf::from(base)
+                .join("xtools")
+                .join("index")
+                .join("files.bin")
+        })
+        .filter(|path| path.exists());
+
+    let (index, source) = if let Some((index, meta)) = cache.as_deref().and_then(persist::load) {
+        (
+            index,
+            format!(
+                "落盘索引（{:.0} 分钟前构建，根 {:?}）",
+                meta.age_secs() as f64 / 60.0,
+                meta.roots
+            ),
+        )
+    } else {
+        let roots = vec![std::path::PathBuf::from(&root)];
+        let (index, stats) = build_walk(&roots);
+        (
+            index,
+            format!(
+                "现场扫描 {} 条，{:.1}s，内存 {:.1}MB",
+                stats.entries,
+                stats.elapsed_ms / 1000.0,
+                stats.bytes as f64 / 1048576.0
+            ),
+        )
+    };
+
+    println!("来源：{source}");
+    println!(
+        "索引：{} 条，内存 {:.1} MB",
+        index.len(),
+        index.memory_bytes() as f64 / 1048576.0
+    );
+
+    for text in [
+        ".rs",
+        "cargo",
+        "node_modules",
+        "ext:png",
+        "config",
+        "ext:log build",
+    ] {
+        let query = query::Query::parse(text);
+        let started = std::time::Instant::now();
+        let hits = query::search(&index, &query, 5);
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        println!("\n[{text}]  {elapsed:.3} ms  ({} 条)", hits.len());
+        for hit in hits {
+            println!(
+                "   {:>5}  {}{}",
+                hit.score,
+                if hit.is_dir { "[D] " } else { "" },
+                hit.path
+            );
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|arg| arg == "--probe-apps") {
         probe_apps();
+        return;
+    }
+
+    if let Some(root) = file_probe_arg() {
+        probe_files(root);
         return;
     }
 
@@ -80,6 +167,10 @@ pub fn run() {
             cmd::app_search,
             cmd::app_launch,
             cmd::app_icon,
+            cmd::file_search,
+            cmd::file_status,
+            cmd::file_open,
+            cmd::file_reveal,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -113,6 +204,9 @@ pub fn run() {
             }
 
             bench::maybe_start(&handle);
+            if let Some(text) = bench::ui_probe_arg() {
+                bench::start_ui_probe(&handle, text);
+            }
             Ok(())
         })
         .on_window_event(|window, event| match event {

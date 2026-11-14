@@ -57,6 +57,34 @@ fn bench_arg() -> Option<usize> {
     None
 }
 
+/// `--probe-ui=<关键词>`：唤起面板并让前端跑一次真实查询，用于无人工介入的 UI 冒烟测试。
+pub fn ui_probe_arg() -> Option<String> {
+    std::env::args().find_map(|arg| {
+        arg.strip_prefix("--probe-ui=")
+            .map(|value| value.to_string())
+    })
+}
+
+pub fn start_ui_probe(app: &tauri::AppHandle, text: String) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let ready_deadline = Instant::now() + Duration::from_secs(20);
+        while !is_ready() && Instant::now() < ready_deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+
+        crate::win::show_palette(&app);
+        std::thread::sleep(Duration::from_millis(600));
+
+        let _ = tauri::Emitter::emit(&app, "ui:query", text.clone());
+        eprintln!("[probe] 已发送查询 {text:?}");
+
+        std::thread::sleep(Duration::from_millis(2500));
+        app.exit(0);
+    });
+}
+
 pub fn maybe_start(app: &tauri::AppHandle) {
     let Some(count) = bench_arg() else {
         return;
