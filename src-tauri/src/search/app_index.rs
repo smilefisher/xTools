@@ -1,0 +1,534 @@
+//! 应用索引：开始菜单快捷方式 + App Paths 注册表 → 内存索引 → 模糊搜索。
+//!
+//! 设计取舍：
+//! - 不用 IShellLink 解析 .lnk，直接拿 .lnk 路径交给 ShellExecute，
+//!   这样工作目录、参数、图标全部由系统负责，省掉一大坨 COM 与转义逻辑。
+//! - 索引常驻内存，搜索不碰磁盘；图标按需提取并缓存成 PNG。
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use pinyin::ToPinyin;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AppEntry {
+    pub id: u32,
+    pub name: String,
+    /// 交给 ShellExecute 的路径（.lnk 或 .exe）
+    pub path: String,
+    pub source: &'static str,
+    #[serde(skip)]
+    key_name: String,
+    #[serde(skip)]
+    key_initials: String,
+    #[serde(skip)]
+    key_pinyin: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AppHit {
+    pub id: u32,
+    pub name: String,
+    pub target: String,
+    pub score: u32,
+}
+
+#[derive(Default, Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Usage {
+    pub count: u32,
+    pub last_used: u64,
+}
+
+pub struct AppIndex {
+    pub entries: Vec<AppEntry>,
+    pub built_ms: f64,
+}
+
+impl AppIndex {
+    pub fn build() -> Self {
+        let started = std::time::Instant::now();
+        let mut raw: Vec<(String, String, &'static str)> = Vec::new();
+
+        for lnk in start_menu_shortcuts() {
+            let Some(stem) = lnk.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if should_skip(stem) {
+                continue;
+            }
+            raw.push((stem.to_string(), lnk.to_string_lossy().into_owned(), "startmenu"));
+        }
+
+        for (name, exe) in app_paths() {
+            raw.push((name, exe, "apppath"));
+        }
+
+        // 同名只留一个（开始菜单优先，因为 .lnk 自带工作目录与参数）
+        raw.sort_by_key(|(_, _, source)| if *source == "startmenu" { 0 } else { 1 });
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut entries = Vec::with_capacity(raw.len());
+
+        for (name, path, source) in raw {
+            let dedupe = name.to_lowercase();
+            if !seen.insert(dedupe) {
+                continue;
+            }
+            let (key_name, key_initials, key_pinyin) = make_keys(&name);
+            entries.push(AppEntry {
+                id: fnv1a(path.as_bytes()),
+                name,
+                path,
+                source,
+                key_name,
+                key_initials,
+                key_pinyin,
+            });
+        }
+
+        Self {
+            entries,
+            built_ms: started.elapsed().as_secs_f64() * 1000.0,
+        }
+    }
+
+    pub fn search(&self, query: &str, limit: usize, usage: &HashMap<u32, Usage>) -> Vec<AppHit> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return self.top_by_usage(limit, usage);
+        }
+
+        let mut hits: Vec<AppHit> = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let base = match_score(entry, &q)?;
+                let usage_score = usage
+                    .get(&entry.id)
+                    .map(|u| (u.count.min(50) * 4) as u32 + recency_bonus(u.last_used))
+                    .unwrap_or(0);
+                Some(AppHit {
+                    id: entry.id,
+                    name: entry.name.clone(),
+                    target: entry.path.clone(),
+                    score: base + usage_score,
+                })
+            })
+            .collect();
+
+        hits.sort_by(|a, b| b.score.cmp(&a.score).then(a.name.cmp(&b.name)));
+        hits.truncate(limit);
+        hits
+    }
+
+    fn top_by_usage(&self, limit: usize, usage: &HashMap<u32, Usage>) -> Vec<AppHit> {
+        let mut ranked: Vec<(&AppEntry, i64)> = self
+            .entries
+            .iter()
+            .map(|entry| {
+                let score = usage
+                    .get(&entry.id)
+                    .map(|u| u.count as i64 * 10 + recency_bonus(u.last_used) as i64)
+                    .unwrap_or(i64::MIN / 2);
+                (entry, score)
+            })
+            .collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.name.cmp(&b.0.name)));
+
+        ranked
+            .into_iter()
+            .take(limit)
+            .map(|(entry, _)| AppHit {
+                id: entry.id,
+                name: entry.name.clone(),
+                target: entry.path.clone(),
+                score: 0,
+            })
+            .collect()
+    }
+
+    pub fn find(&self, id: u32) -> Option<&AppEntry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
+}
+
+fn recency_bonus(last_used: u64) -> u32 {
+    if last_used == 0 {
+        return 0;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let age = now.saturating_sub(last_used);
+    match age {
+        0..=3_600 => 30,
+        3_601..=86_400 => 20,
+        86_401..=604_800 => 10,
+        _ => 0,
+    }
+}
+
+fn make_keys(name: &str) -> (String, String, String) {
+    let lower = name.to_lowercase();
+    let mut initials = String::with_capacity(name.chars().count());
+    let mut full = String::with_capacity(name.chars().count() * 2);
+    for ch in name.chars() {
+        match ch.to_pinyin() {
+            Some(py) => {
+                initials.push_str(py.first_letter());
+                full.push_str(py.plain());
+            }
+            None => {
+                if ch.is_alphanumeric() {
+                    initials.push(ch.to_ascii_lowercase());
+                    full.push(ch.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    (lower, initials.to_lowercase(), full.to_lowercase())
+}
+
+/// 打分：完全匹配 > 前缀 > 词界 > 子串 > 拼音首字母 > 全拼 > 子序列
+fn match_score(entry: &AppEntry, q: &str) -> Option<u32> {
+    let name = &entry.key_name;
+
+    if name == q {
+        return Some(1_000);
+    }
+    if name.starts_with(q) {
+        return Some(900 - (name.chars().count() - q.chars().count()).min(60) as u32);
+    }
+    if let Some(pos) = name.find(q) {
+        let boundary = pos > 0
+            && name[..pos]
+                .chars()
+                .next_back()
+                .map(|c| c == ' ' || c == '-' || c == '_' || c == '.')
+                .unwrap_or(false);
+        return Some(if boundary { 850 } else { 800 - pos.min(50) as u32 });
+    }
+    if entry.key_initials == q {
+        return Some(790);
+    }
+    if entry.key_initials.starts_with(q) {
+        return Some(760);
+    }
+    if entry.key_initials.contains(q) {
+        return Some(700);
+    }
+    if entry.key_pinyin.contains(q) {
+        return Some(640);
+    }
+    // 子序列：typo 容忍（如 vs → visual studio code）
+    subsequence_score(name, q)
+}
+
+fn subsequence_score(haystack: &str, needle: &str) -> Option<u32> {
+    let hay: Vec<char> = haystack.chars().collect();
+    let mut idx = 0usize;
+    let mut gaps = 0usize;
+    for want in needle.chars() {
+        let mut found = None;
+        for i in idx..hay.len() {
+            if hay[i] == want {
+                found = Some(i);
+                break;
+            }
+        }
+        let pos = found?;
+        gaps += pos - idx;
+        idx = pos + 1;
+    }
+    if gaps > needle.chars().count() * 3 {
+        return None;
+    }
+    Some(420u32.saturating_sub(gaps.min(120) as u32))
+}
+
+fn should_skip(name: &str) -> bool {
+    const SKIP: [&str; 10] = [
+        "uninstall",
+        "卸载",
+        "readme",
+        "说明",
+        "help",
+        "帮助",
+        "website",
+        "网站",
+        "release notes",
+        "更新日志",
+    ];
+    let lower = name.to_lowercase();
+    SKIP.iter().any(|s| lower.contains(s))
+}
+
+fn start_menu_shortcuts() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(program_data) = std::env::var_os("ProgramData") {
+        roots.push(
+            PathBuf::from(program_data)
+                .join("Microsoft\\Windows\\Start Menu\\Programs"),
+        );
+    }
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        roots.push(PathBuf::from(appdata).join("Microsoft\\Windows\\Start Menu\\Programs"));
+    }
+
+    let mut found = Vec::new();
+    for root in roots {
+        walk(&root, &mut found, 0);
+    }
+    found
+}
+
+fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+    if depth > 6 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk(&path, out, depth + 1);
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("lnk"))
+            .unwrap_or(false)
+        {
+            out.push(path);
+        }
+    }
+}
+
+/// App Paths：注册表里登记的可执行文件（很多开发工具只有这里，没有开始菜单项）
+fn app_paths() -> Vec<(String, String)> {
+    const ROOT: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths";
+    const WOW: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths";
+
+    let mut result = Vec::new();
+    for hive in [winreg::enums::HKEY_CURRENT_USER, winreg::enums::HKEY_LOCAL_MACHINE] {
+        for root in [ROOT, WOW] {
+            let Ok(key) = winreg::RegKey::predef(hive).open_subkey(root) else {
+                continue;
+            };
+            for sub in key.enum_keys().flatten() {
+                let Ok(item) = key.open_subkey(&sub) else {
+                    continue;
+                };
+                let Ok(exe) = item.get_value::<String, _>("") else {
+                    continue;
+                };
+                if !exe.to_lowercase().ends_with(".exe") || !Path::new(&exe).exists() {
+                    continue;
+                }
+                let name = Path::new(&exe)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&sub)
+                    .to_string();
+                result.push((name, exe));
+            }
+        }
+    }
+    result
+}
+
+fn fnv1a(bytes: &[u8]) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for b in bytes {
+        hash ^= *b as u32;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+// ---------------------------------------------------------------- 启动
+
+pub fn launch(path: &str, run_as_admin: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let file: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+        let verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
+
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
+            lpVerb: if run_as_admin {
+                PCWSTR(verb.as_ptr())
+            } else {
+                PCWSTR::null()
+            },
+            lpFile: PCWSTR(file.as_ptr()),
+            nShow: SW_SHOWNORMAL.0,
+            ..Default::default()
+        };
+
+        unsafe { ShellExecuteExW(&mut info).map_err(|err| err.message().to_string()) }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, run_as_admin);
+        Err("仅支持 Windows".into())
+    }
+}
+
+// ---------------------------------------------------------------- 图标
+
+/// 提取 32px 图标并缓存成 PNG；返回 PNG 字节。
+pub fn icon_png(path: &str, cache_dir: &Path) -> Option<Vec<u8>> {
+    let id = fnv1a(path.as_bytes());
+    let cache_file = cache_dir.join(format!("{id:08x}.png"));
+    if let Ok(bytes) = std::fs::read(&cache_file) {
+        return Some(bytes);
+    }
+    let bytes = extract_icon_png(path)?;
+    let _ = std::fs::create_dir_all(cache_dir);
+    let _ = std::fs::write(&cache_file, &bytes);
+    Some(bytes)
+}
+
+#[cfg(windows)]
+fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+
+    use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
+        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    };
+    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
+    use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, DrawIconEx, DI_NORMAL};
+
+    const SIZE: i32 = 32;
+
+    let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut info = SHFILEINFOW::default();
+
+    let ok = unsafe {
+        SHGetFileInfoW(
+            PCWSTR(wide.as_ptr()),
+            Default::default(),
+            Some(&mut info),
+            size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | SHGFI_LARGEICON,
+        )
+    };
+    if ok == 0 || info.hIcon.is_invalid() {
+        return None;
+    }
+
+    let icon = info.hIcon;
+    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
+
+    unsafe {
+        let screen = GetDC(None);
+        let mem = CreateCompatibleDC(Some(screen));
+        let bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: SIZE,
+                biHeight: -SIZE, // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        if let Ok(bitmap) = CreateDIBSection(Some(mem), &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
+        {
+            let old = SelectObject(mem, bitmap.into());
+            let _ = DrawIconEx(mem, 0, 0, icon, SIZE, SIZE, 0, None, DI_NORMAL);
+            if !bits.is_null() {
+                std::ptr::copy_nonoverlapping(bits as *const u8, rgba.as_mut_ptr(), rgba.len());
+            }
+            SelectObject(mem, old);
+            let _ = DeleteObject(bitmap.into());
+        }
+
+        let _ = DeleteDC(mem);
+        ReleaseDC(None, screen);
+        let _ = DestroyIcon(icon);
+    }
+
+    // BGRA -> RGBA
+    for px in rgba.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+
+    encode_png(&rgba, SIZE as u32, SIZE as u32)
+}
+
+#[cfg(windows)]
+fn encode_png(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    let image = image::RgbaImage::from_raw(width, height, rgba.to_vec())?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, image::ImageFormat::Png)
+        .ok()?;
+    Some(out.into_inner())
+}
+
+// ---------------------------------------------------------------- 使用频次
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct UsageStore {
+    pub apps: HashMap<u32, Usage>,
+    #[serde(skip)]
+    pub path: Option<PathBuf>,
+}
+
+impl UsageStore {
+    pub fn load() -> Self {
+        let path = usage_path();
+        let apps = path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|raw| serde_json::from_str::<HashMap<u32, Usage>>(&raw).ok())
+            .unwrap_or_default();
+        Self { apps, path }
+    }
+
+    pub fn record(&mut self, id: u32) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let entry = self.apps.entry(id).or_default();
+        entry.count += 1;
+        entry.last_used = now;
+        self.flush();
+    }
+
+    fn flush(&self) {
+        let Some(path) = &self.path else { return };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(raw) = serde_json::to_string(&self.apps) {
+            let _ = std::fs::write(path, raw);
+        }
+    }
+}
+
+fn usage_path() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|base| base.join("xtools").join("usage.json"))
+}
+
+pub fn icon_cache_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("xtools").join("icons"))
+}

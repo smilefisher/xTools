@@ -103,14 +103,20 @@ body {
 }
 
 .row .icon {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  object-fit: contain;
+}
+
+.row .icon.letter {
   display: grid;
   place-items: center;
-  border-radius: 8px;
   background: rgb(255 255 255 / 0.06);
   color: #c8d0e0;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .row .text {

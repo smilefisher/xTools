@@ -87,6 +87,9 @@ pub fn show_palette(app: &AppHandle) {
 
     crate::bench::mark_shown();
     let _ = win.emit("palette:shown", ());
+    if crate::debug_on() {
+        eprintln!("[win] palette shown");
+    }
 }
 
 /// 光标所在显示器上居中偏上，跟随用户当前工作的屏幕。
