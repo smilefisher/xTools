@@ -1,0 +1,16 @@
+[package]
+name = "xtools-indexd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "xTools 索引助手：MFT/USN 建索引，通过命名管道提供只读查询"
+
+[[bin]]
+name = "xtools-indexd"
+path = "src/main.rs"
+
+[dependencies]
+xtools-indexer = { path = "../indexer" }
+xtools-pipe = { path = "../pipe" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }

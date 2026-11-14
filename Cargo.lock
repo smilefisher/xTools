@@ -5079,6 +5079,17 @@ dependencies = [
  "windows 0.61.3",
  "winreg 0.55.0",
  "xtools-indexer",
+ "xtools-pipe",
+]
+
+[[package]]
+name = "xtools-indexd"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "xtools-indexer",
+ "xtools-pipe",
 ]
 
 [[package]]
@@ -5088,6 +5099,13 @@ dependencies = [
  "memchr",
  "rayon",
  "serde",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "xtools-pipe"
+version = "0.1.0"
+dependencies = [
  "windows 0.61.3",
 ]
 

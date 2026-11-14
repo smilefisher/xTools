@@ -1,6 +1,6 @@
-[workspace]
+﻿[workspace]
 resolver = "3"
-members = ["src-tauri", "crates/indexer"]
+members = ["src-tauri", "crates/indexer", "crates/pipe", "crates/indexd"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +14,7 @@ opt-level = 3
 panic = "abort"
 strip = true
 
-# 开发时依赖用 O1：构建快、索引类代码不至于慢到误导性能判断
+# 寮€鍙戞椂渚濊禆鐢?O1锛氭瀯寤哄揩銆佺储寮曠被浠ｇ爜涓嶈嚦浜庢參鍒拌瀵兼€ц兘鍒ゆ柇
 [profile.dev.package."*"]
 opt-level = 1
+

@@ -7,11 +7,11 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::Index;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
     pub idx: u32,
     pub score: u32,

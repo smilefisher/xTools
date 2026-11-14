@@ -287,6 +287,30 @@ pub fn run() {
         return;
     }
 
+    if std::env::args().any(|arg| arg == "--probe-pipe") {
+        match crate::search::service::ping() {
+            Some(entries) => {
+                println!("索引服务在线：{entries} 条");
+                for query in ["cmd", "lib", "main"] {
+                    let started = std::time::Instant::now();
+                    let hits = crate::search::service::search(query, 3);
+                    println!(
+                        "[{query}] {:?} 条，{:.2} ms（含连接）",
+                        hits.as_ref().map(|h| h.len()),
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                    if let Some(hits) = hits {
+                        for hit in hits.iter().take(3) {
+                            println!("    {:>4}  {}", hit.score, hit.path);
+                        }
+                    }
+                }
+            }
+            None => println!("索引服务未运行"),
+        }
+        return;
+    }
+
     // 设置必须在 AppState 之前加载：索引根目录来自配置
     settings::init();
 

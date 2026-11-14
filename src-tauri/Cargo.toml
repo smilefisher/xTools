@@ -19,6 +19,7 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 xtools-indexer = { path = "../crates/indexer" }
+xtools-pipe = { path = "../crates/pipe" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 pinyin = "0.10"
 winreg = "0.55"

@@ -31,6 +31,18 @@ npm run dist       # 产物：target/release/bundle/nsis/xTools_0.1.0_x64-setup.
 - 安装界面简体中文（内置简中 + 英文），卸载走「设置 → 应用」或安装目录的 `uninstall.exe`
 - 依赖 WebView2 运行时：Win11 自带；Win10 若缺，安装器会引导安装
 
+## 索引服务（可选）
+
+`xtools-indexd.exe` 是独立的索引助手：建索引 + 通过命名管道 `xtools-index-v1` 提供**只读查询**（不接受任何执行/打开路径的指令）。
+
+```bash
+xtools-indexd.exe --roots="D:\Projects"     # 不给参数则索引 %USERPROFILE%
+```
+
+- 主程序启动时先探活：服务在线就**不建本地索引**，直接把查询转发过去；不在线则回退进程内索引
+- 以**管理员**身份运行时走 MFT 枚举（百万文件秒级），否则退回目录扫描
+- 协议：一行一个 JSON，`{"op":"ping"}` / `{"op":"search","query":"cargo","limit":20}`
+
 ## 性能测量
 
 ```bash

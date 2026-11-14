@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use xtools_indexer::query::{self, Hit};
@@ -16,6 +16,8 @@ const MAX_AGE_SECS: u64 = 6 * 3600;
 pub struct FileState {
     index: RwLock<Option<Index>>,
     ready: AtomicBool,
+    /// 索引服务可用时的条数（0 表示服务不可用）
+    service_entries: AtomicUsize,
     roots: Vec<PathBuf>,
 }
 
@@ -25,6 +27,7 @@ impl FileState {
         Self {
             index: RwLock::new(None),
             ready: AtomicBool::new(false),
+            service_entries: AtomicUsize::new(0),
             roots,
         }
     }
@@ -33,7 +36,15 @@ impl FileState {
         self.ready.load(Ordering::Relaxed)
     }
 
+    fn service_available(&self) -> bool {
+        self.service_entries.load(Ordering::Relaxed) > 0
+    }
+
     pub fn entry_count(&self) -> usize {
+        let remote = self.service_entries.load(Ordering::Relaxed);
+        if remote > 0 {
+            return remote;
+        }
         self.index
             .read()
             .ok()
@@ -51,6 +62,14 @@ impl FileState {
     }
 
     fn load_or_build(self: &Arc<Self>) {
+        // 优先用索引服务：命中就不建本地索引，内存直接省下来
+        if let Some(entries) = crate::search::service::ping() {
+            eprintln!("[file] 使用索引服务：{entries} 条（跳过本地建索引）");
+            self.service_entries.store(entries, Ordering::Relaxed);
+            self.ready.store(true, Ordering::Relaxed);
+            return;
+        }
+
         let cache = index_path();
         let root_labels: Vec<String> = self
             .roots
@@ -206,6 +225,14 @@ impl FileState {
         if !self.is_ready() || text.trim().is_empty() {
             return Vec::new();
         }
+
+        if self.service_available() {
+            if let Some(hits) = crate::search::service::search(text, limit) {
+                return hits;
+            }
+            // 服务临时不可用：退到本地索引（如果有）
+        }
+
         let Ok(guard) = self.index.read() else {
             return Vec::new();
         };
