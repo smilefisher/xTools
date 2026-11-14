@@ -283,3 +283,34 @@ pub fn close_json(app: &AppHandle) {
         let _ = window.hide();
     }
 }
+
+// ---------------------------------------------------------------- 设置窗口
+
+pub const SETTINGS_LABEL: &str = "settings";
+
+pub fn open_settings(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(SETTINGS_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(
+        app,
+        SETTINGS_LABEL,
+        WebviewUrl::App("index.html#settings".into()),
+    )
+    .title("xTools · 设置")
+    .inner_size(560.0, 640.0)
+    .min_inner_size(480.0, 480.0)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn close_settings(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(SETTINGS_LABEL) {
+        let _ = window.close();
+    }
+}

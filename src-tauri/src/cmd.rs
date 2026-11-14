@@ -79,6 +79,43 @@ pub fn settings_set(next: Settings) -> Settings {
     settings::current()
 }
 
+// ---------------------------------------------------------------- 设置窗口
+
+#[tauri::command]
+pub fn settings_open(app: AppHandle) -> Result<(), String> {
+    crate::shot::open_settings(&app)
+}
+
+#[tauri::command]
+pub fn settings_close(app: AppHandle) {
+    crate::shot::close_settings(&app);
+}
+
+#[tauri::command]
+pub fn settings_save(app: AppHandle, next: Settings) -> Result<serde_json::Value, String> {
+    settings::save(next);
+    let problems = crate::hotkey::reregister_all(&app);
+    Ok(serde_json::json!({
+        "settings": settings::current(),
+        "problems": problems,
+    }))
+}
+
+#[tauri::command]
+pub fn autostart_get() -> serde_json::Value {
+    serde_json::json!({
+        "enabled": crate::autostart::is_enabled(),
+        "command": crate::autostart::current_command(),
+        "exe": std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+pub fn autostart_set(enabled: bool) -> Result<bool, String> {
+    crate::autostart::set(enabled)?;
+    Ok(crate::autostart::is_enabled())
+}
+
 // ---------------------------------------------------------------- 应用搜索
 
 #[tauri::command]

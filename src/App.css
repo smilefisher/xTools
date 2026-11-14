@@ -476,3 +476,137 @@ kbd {
   background: rgb(255 255 255 / 0.14);
   margin: 0 2px;
 }
+
+/* ---------------- 设置窗口 ---------------- */
+.settings-root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  padding: 16px 18px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  background: #1b1c1f;
+  color: #e7e9ee;
+  font-size: 13px;
+}
+
+.settings-loading {
+  color: #8b8f99;
+  padding: 20px;
+}
+
+.settings-group {
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.settings-group h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b7bdc9;
+  letter-spacing: 0.03em;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.settings-row input[type="text"],
+.settings-row input:not([type]) {
+  width: 200px;
+  padding: 5px 9px;
+  color: #e7e9ee;
+  background: rgb(0 0 0 / 0.28);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 6px;
+  outline: none;
+  font-family: Consolas, monospace;
+}
+
+.settings-tip {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #8b8f99;
+  line-height: 1.5;
+}
+
+.settings-root-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  margin-bottom: 4px;
+  background: rgb(255 255 255 / 0.04);
+  border-radius: 6px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.settings-root-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.settings-add input {
+  flex: 1;
+  padding: 5px 9px;
+  color: #e7e9ee;
+  background: rgb(0 0 0 / 0.28);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 6px;
+  outline: none;
+  font-family: Consolas, monospace;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.settings-root button,
+.settings-footer button {
+  padding: 5px 12px;
+  font-size: 12px;
+  color: #dfe3ea;
+  background: rgb(255 255 255 / 0.06);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.settings-footer button.primary {
+  background: rgb(91 140 255 / 0.28);
+  border-color: rgb(91 140 255 / 0.5);
+  color: #fff;
+}
+
+.settings-status {
+  font-size: 11px;
+  color: #6fae7f;
+  margin-left: auto;
+}
+
+.settings-problems {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: #ffb86b;
+}

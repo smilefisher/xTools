@@ -8,6 +8,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "唤起面板", true, None::<&str>)?;
     let shot = MenuItem::with_id(app, "shot", "截图  Alt+Shift+A", true, None::<&str>)?;
     let json = MenuItem::with_id(app, "json", "JSON 工具", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
     let reset = MenuItem::with_id(app, "reset", "重新注册热键", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 xTools", true, None::<&str>)?;
     let menu = Menu::with_items(
@@ -16,6 +17,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &show,
             &shot,
             &json,
+            &settings,
             &PredefinedMenuItem::separator(app)?,
             &reset,
             &PredefinedMenuItem::separator(app)?,
@@ -33,6 +35,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "json" => {
                 if let Err(err) = crate::shot::open_json(app, None) {
                     eprintln!("[tray] 打开 JSON 工具失败：{err}");
+                }
+            }
+            "settings" => {
+                if let Err(err) = crate::shot::open_settings(app) {
+                    eprintln!("[tray] 打开设置失败：{err}");
                 }
             }
             "reset" => {

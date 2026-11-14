@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import App from "./App";
 import JsonTool from "./views/JsonTool";
 import Pin from "./views/Pin";
+import SettingsView from "./views/Settings";
 import Shot from "./views/Shot";
 
 const root = document.getElementById("root");
@@ -19,6 +20,8 @@ if (hash.startsWith("#pin/")) {
   render(() => <Shot />, root);
 } else if (hash === "#json") {
   render(() => <JsonTool />, root);
+} else if (hash === "#settings") {
+  render(() => <SettingsView />, root);
 } else {
   render(() => <App />, root);
 }

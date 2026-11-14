@@ -24,6 +24,29 @@ where
         .map_err(|e| format!("{e}"))
 }
 
+/// 重新注册全部热键（改完设置后用）：先全撤再按配置注册。
+pub fn reregister_all(app: &AppHandle) -> Vec<String> {
+    let mut problems = Vec::new();
+    let _ = app.global_shortcut().unregister_all();
+
+    let spec = crate::settings::current().hotkey;
+    if let Err(err) = register(app, &spec) {
+        problems.push(format!("面板热键 {spec} 注册失败：{err}"));
+        for fallback in ["ctrl+space", "alt+shift+space", "ctrl+alt+space"] {
+            if register(app, fallback).is_ok() {
+                problems.push(format!("已回退到 {fallback}"));
+                break;
+            }
+        }
+    }
+
+    if let Err(err) = register_action(app, "alt+shift+a", |app| crate::shot::toggle(app)) {
+        problems.push(format!("截图热键注册失败：{err}"));
+    }
+
+    problems
+}
+
 fn parse(spec: &str) -> Option<Shortcut> {
     let mut modifiers = Modifiers::empty();
     let mut code: Option<Code> = None;

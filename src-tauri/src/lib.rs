@@ -4,6 +4,7 @@ mod bench;
 mod capture;
 mod cmd;
 mod annotate;
+mod autostart;
 mod hotkey;
 mod json;
 mod search;
@@ -239,6 +240,24 @@ fn probe_capture() {
     }
 }
 
+/// `--probe-autostart`：开启 → 读注册表 → 关闭 → 再读，验证自启写入正确。
+fn probe_autostart() {
+    println!("初始状态：enabled={}", autostart::is_enabled());
+
+    match autostart::enable() {
+        Ok(()) => {
+            println!("开启后：enabled={}", autostart::is_enabled());
+            println!("注册表值：{:?}", autostart::current_command());
+        }
+        Err(err) => println!("开启失败：{err}"),
+    }
+
+    match autostart::disable() {
+        Ok(()) => println!("关闭后：enabled={}", autostart::is_enabled()),
+        Err(err) => println!("关闭失败：{err}"),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args().any(|arg| arg == "--probe-apps") {
@@ -261,6 +280,11 @@ pub fn run() {
         return;
     }
 
+    if std::env::args().any(|arg| arg == "--probe-autostart") {
+        probe_autostart();
+        return;
+    }
+
     // 设置必须在 AppState 之前加载：索引根目录来自配置
     settings::init();
 
@@ -278,6 +302,11 @@ pub fn run() {
             cmd::first_frame,
             cmd::settings_get,
             cmd::settings_set,
+            cmd::settings_open,
+            cmd::settings_close,
+            cmd::settings_save,
+            cmd::autostart_get,
+            cmd::autostart_set,
             cmd::app_search,
             cmd::app_launch,
             cmd::app_icon,
@@ -377,6 +406,19 @@ pub fn run() {
                         started.elapsed().as_secs_f64() * 1000.0
                     );
                     std::thread::sleep(std::time::Duration::from_millis(1500));
+                    app.exit(0);
+                });
+            }
+
+            if std::env::args().any(|arg| arg == "--probe-settings") {
+                let app = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1800));
+                    match crate::shot::open_settings(&app) {
+                        Ok(()) => eprintln!("[probe-settings] 设置窗口已打开"),
+                        Err(err) => eprintln!("[probe-settings] 打开失败：{err}"),
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
                     app.exit(0);
                 });
             }
