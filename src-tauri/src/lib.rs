@@ -137,9 +137,12 @@ fn probe_files(root: String) {
         println!("\n[{text}]  {elapsed:.3} ms  ({} 条)", hits.len());
         for hit in hits {
             println!(
-                "   {:>5}  {}{}",
+                "   {:>5}  {}{}  [{} B · {}]\n          {}",
                 hit.score,
                 if hit.is_dir { "[D] " } else { "" },
+                hit.name,
+                hit.size,
+                hit.mtime,
                 hit.path
             );
         }

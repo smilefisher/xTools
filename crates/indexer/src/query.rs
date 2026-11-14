@@ -19,6 +19,8 @@ pub struct Hit {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    #[serde(default)]
+    pub mtime: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -143,13 +145,15 @@ pub fn search(index: &Index, query: &Query, limit: usize) -> Vec<Hit> {
     top.into_iter()
         .map(|cand| {
             let idx = cand.idx;
+            let entry = &index.entries[idx as usize];
             Hit {
                 idx,
                 score: cand.score,
                 path: index.path_of(idx),
                 name: index.name(idx).to_string(),
-                is_dir: index.entries[idx as usize].is_dir,
-                size: index.entries[idx as usize].size,
+                is_dir: entry.is_dir,
+                size: entry.size,
+                mtime: entry.mtime,
             }
         })
         .collect()

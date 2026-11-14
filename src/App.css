@@ -652,3 +652,11 @@ kbd {
   border-radius: 5px;
   pointer-events: none;
 }
+
+/* 文件行的附加信息（大小 / 修改日期） */
+.row .meta {
+  margin-left: 8px;
+  font-size: 11px;
+  color: #7f8592;
+  font-variant-numeric: tabular-nums;
+}

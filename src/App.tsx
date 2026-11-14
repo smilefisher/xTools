@@ -12,6 +12,7 @@ type FileHit = {
   name: string;
   is_dir: boolean;
   size: number;
+  mtime: number;
 };
 type FileStatus = { ready: boolean; entries: number };
 
@@ -233,6 +234,26 @@ export default function App() {
     </div>
   );
 
+  const formatSize = (bytes: number, isDir: boolean) => {
+    if (isDir) return "";
+    if (!bytes) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1048576).toFixed(1)} MB`;
+    return `${(bytes / 1073741824).toFixed(1)} GB`;
+  };
+
+  const formatDate = (seconds: number) => {
+    if (!seconds) return "";
+    const date = new Date(seconds * 1000);
+    const now = new Date();
+    const sameYear = date.getFullYear() === now.getFullYear();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return sameYear
+      ? `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+      : `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
+
   const renderFile = (item: FileHit, index: number) => (
     <div
       class="row"
@@ -242,7 +263,16 @@ export default function App() {
     >
       <span class="icon letter">{item.is_dir ? "▸" : "·"}</span>
       <span class="text">
-        <span class="title">{item.name}</span>
+        <span class="title">
+          {item.name}
+          <Show when={formatSize(item.size, item.is_dir) || formatDate(item.mtime)}>
+            <span class="meta">
+              {formatSize(item.size, item.is_dir)}
+              <Show when={formatSize(item.size, item.is_dir) && formatDate(item.mtime)}> · </Show>
+              {formatDate(item.mtime)}
+            </span>
+          </Show>
+        </span>
         <span class="desc">{item.path}</span>
       </span>
       <Show when={index === selected()}>
