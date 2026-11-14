@@ -235,6 +235,11 @@ pub fn json_query(text: String, path: String) -> crate::json::JsonResult {
 }
 
 #[tauri::command]
+pub fn json_tree(text: String, limit: Option<usize>) -> crate::json::JsonTree {
+    crate::json::tree(&text, limit.unwrap_or(3000))
+}
+
+#[tauri::command]
 pub fn json_open(app: AppHandle, text: Option<String>) -> Result<(), String> {
     crate::shot::open_json(&app, text)
 }

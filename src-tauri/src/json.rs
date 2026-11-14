@@ -371,9 +371,178 @@ fn ordered_map() -> Map<String, Value> {
     Map::new()
 }
 
+/// 树视图节点（扁平数组，前端按 parent/depth 渲染折叠）。
+#[derive(Debug, Serialize)]
+pub struct TreeNode {
+    pub id: usize,
+    pub parent: i64,
+    pub depth: usize,
+    pub key: String,
+    pub kind: &'static str,
+    pub preview: String,
+    pub path: String,
+    pub has_children: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonTree {
+    pub ok: bool,
+    pub nodes: Vec<TreeNode>,
+    pub total: usize,
+    pub truncated: bool,
+    pub error: Option<JsonError>,
+    pub elapsed_ms: f64,
+}
+
+/// 把 JSON 压成扁平节点列表；节点数超上限就截断（前端后续可懒展开）。
+pub fn tree(text: &str, limit: usize) -> JsonTree {
+    let started = std::time::Instant::now();
+    let value = match parse(text) {
+        Ok(value) => value,
+        Err(err) => {
+            return JsonTree {
+                ok: false,
+                nodes: Vec::new(),
+                total: 0,
+                truncated: false,
+                error: Some(err),
+                elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+            };
+        }
+    };
+
+    let limit = limit.clamp(16, 20_000);
+    let mut nodes = Vec::new();
+    let mut total = 0usize;
+    walk_tree(&value, "$", 0, -1, &mut nodes, &mut total, limit);
+
+    JsonTree {
+        ok: true,
+        truncated: total > nodes.len(),
+        total,
+        nodes,
+        error: None,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+    }
+}
+
+fn walk_tree(
+    value: &Value,
+    path: &str,
+    depth: usize,
+    parent: i64,
+    out: &mut Vec<TreeNode>,
+    total: &mut usize,
+    limit: usize,
+) {
+    *total += 1;
+    if out.len() >= limit {
+        return;
+    }
+
+    let id = out.len();
+    let has_children = match value {
+        Value::Object(map) => !map.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        _ => false,
+    };
+
+    out.push(TreeNode {
+        id,
+        parent,
+        depth,
+        key: display_key(path),
+        kind: type_name(value),
+        preview: preview_of(value),
+        path: path.to_string(),
+        has_children,
+    });
+
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let child_path = format!("{path}.{key}");
+                walk_tree(child, &child_path, depth + 1, id as i64, out, total, limit);
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let child_path = format!("{path}[{index}]");
+                walk_tree(child, &child_path, depth + 1, id as i64, out, total, limit);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 从路径里截出这一段的名字：`$.a.b[2]` → `[2]`。
+fn display_key(path: &str) -> String {
+    if path == "$" {
+        return "$".into();
+    }
+    if let Some(index) = path.rfind('[') {
+        return path[index..].to_string();
+    }
+    match path.rfind('.') {
+        Some(index) => path[index + 1..].to_string(),
+        None => path.to_string(),
+    }
+}
+
+fn preview_of(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => {
+            let clipped: String = text.chars().take(80).collect();
+            if text.chars().count() > 80 {
+                format!("\"{clipped}…\"")
+            } else {
+                format!("\"{clipped}\"")
+            }
+        }
+        Value::Array(items) => format!("[{} 项]", items.len()),
+        Value::Object(map) => format!("{{{} 个键}}", map.len()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tree_flattens_with_paths() {
+        let result = tree(r#"{"a":{"b":[1,2]},"c":true}"#, 100);
+        assert!(result.ok);
+        assert!(!result.truncated);
+        // 根 + a + b + 2 个元素 + c
+        assert_eq!(result.nodes.len(), 6);
+        let paths: Vec<&str> = result.nodes.iter().map(|n| n.path.as_str()).collect();
+        assert!(paths.contains(&"$.a.b[0]"));
+        assert!(paths.contains(&"$.c"));
+        assert_eq!(result.nodes[1].depth, 1);
+        assert!(result.nodes[1].has_children);
+    }
+
+    #[test]
+    fn tree_truncates() {
+        let big = format!(
+            "[{}]",
+            (0..500).map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+        );
+        let result = tree(&big, 32);
+        assert!(result.ok);
+        assert!(result.truncated);
+        assert!(result.nodes.len() <= 32);
+    }
+
+    #[test]
+    fn tree_reports_error() {
+        let result = tree("{oops", 10);
+        assert!(!result.ok);
+        assert!(result.error.is_some());
+    }
 
     #[test]
     fn format_preserves_order() {

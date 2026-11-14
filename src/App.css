@@ -350,3 +350,67 @@ kbd {
   align-items: center;
   gap: 4px;
 }
+
+/* ---------------- JSON 树视图 ---------------- */
+.json-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.json-body.split .json-editor {
+  flex: 1 1 55%;
+  border-right: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.json-tree {
+  flex: 1 1 45%;
+  overflow: auto;
+  padding: 6px 0;
+  font-family: Cascadia Code, Consolas, monospace;
+  font-size: 12px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tree-row:hover {
+  background: rgb(91 140 255 / 0.14);
+}
+
+.tree-caret {
+  width: 12px;
+  color: #8b8f99;
+  flex: 0 0 auto;
+}
+
+.tree-key {
+  color: #9ecbff;
+  flex: 0 0 auto;
+}
+
+.tree-kind {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.07);
+  color: #8b8f99;
+  flex: 0 0 auto;
+}
+
+.tree-preview {
+  color: #b7bdc9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kind-string { color: #a5d6a7; }
+.kind-number { color: #ffcc80; }
+.kind-boolean { color: #ce93d8; }
+.kind-object, .kind-array { color: #90caf9; }

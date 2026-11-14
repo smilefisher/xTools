@@ -294,6 +294,7 @@ pub fn run() {
             cmd::json_minify,
             cmd::json_validate,
             cmd::json_query,
+            cmd::json_tree,
             cmd::json_open,
             cmd::json_close,
             cmd::json_take_pending,
@@ -369,6 +370,14 @@ pub fn run() {
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(2000));
                     let sample = r#"{"b":[1,2,{"c":true}],"a":"文本"}"#;
+                    let tree = crate::json::tree(sample, 3000);
+                    eprintln!(
+                        "[probe-json] tree ok={} nodes={} truncated={} {:.2}ms",
+                        tree.ok,
+                        tree.nodes.len(),
+                        tree.truncated,
+                        tree.elapsed_ms
+                    );
                     match crate::shot::open_json(&app, Some(sample.to_string())) {
                         Ok(()) => eprintln!("[probe-json] 已打开 JSON 窗口"),
                         Err(err) => eprintln!("[probe-json] 打开失败：{err}"),

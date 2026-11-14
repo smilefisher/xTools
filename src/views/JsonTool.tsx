@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { basicSetup } from "codemirror";
@@ -15,6 +15,26 @@ type JsonResult = {
   output_bytes: number;
 };
 
+type JsonTreeNode = {
+  id: number;
+  parent: number;
+  depth: number;
+  key: string;
+  kind: string;
+  preview: string;
+  path: string;
+  has_children: boolean;
+};
+
+type JsonTree = {
+  ok: boolean;
+  nodes: JsonTreeNode[];
+  total: number;
+  truncated: boolean;
+  elapsed_ms: number;
+  error: { message: string; line: number; column: number } | null;
+};
+
 const SAMPLE = `{
   "name": "xTools",
   "version": "0.1.0",
@@ -27,6 +47,9 @@ export default function JsonTool() {
   const [error, setError] = createSignal("");
   const [meta, setMeta] = createSignal("");
   const [query, setQuery] = createSignal("$.features[0]");
+  const [showTree, setShowTree] = createSignal(false);
+  const [tree, setTree] = createSignal<JsonTree | null>(null);
+  const [collapsed, setCollapsed] = createSignal<Set<number>>(new Set());
   let host: HTMLDivElement | undefined;
   let view: EditorView | undefined;
 
@@ -83,6 +106,56 @@ export default function JsonTool() {
         sortKeys: true,
       });
       apply(result, "键排序");
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const visibleNodes = createMemo(() => {
+    const data = tree();
+    if (!data) return [] as JsonTreeNode[];
+    const byId = new Map(data.nodes.map((node) => [node.id, node]));
+    const hidden = collapsed();
+
+    const isHidden = (node: JsonTreeNode) => {
+      let cursor: JsonTreeNode | undefined = node;
+      while (cursor && cursor.parent >= 0) {
+        const parent = byId.get(cursor.parent);
+        if (!parent) return false;
+        if (hidden.has(parent.id)) return true;
+        cursor = parent;
+      }
+      return false;
+    };
+
+    return data.nodes.filter((node) => !isHidden(node));
+  });
+
+  const toggleCollapse = (id: number) => {
+    const next = new Set(collapsed());
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setCollapsed(next);
+  };
+
+  const toggleTree = async () => {
+    if (showTree()) {
+      setShowTree(false);
+      return;
+    }
+    try {
+      const result = await invoke<JsonTree>("json_tree", { text: text(), limit: 3000 });
+      if (!result.ok) {
+        const err = result.error;
+        setError(err ? `${err.message}（第 ${err.line} 行）` : "解析失败");
+        return;
+      }
+      setTree(result);
+      setCollapsed(new Set<number>());
+      setShowTree(true);
+      setStatus(
+        `树视图：${result.nodes.length} 个节点${result.truncated ? `（共 ${result.total}，已截断）` : ""} · ${result.elapsed_ms.toFixed(1)} ms`,
+      );
     } catch (err) {
       setError(String(err));
     }
@@ -155,9 +228,40 @@ export default function JsonTool() {
           placeholder="$.path.to.value  ·  $.list[*].name"
         />
         <button onClick={() => void run("query")}>查询</button>
+        <button onClick={() => void toggleTree()}>{showTree() ? "收起树" : "树视图"}</button>
       </div>
 
-      <div class="json-editor" ref={host} />
+      <div class="json-body" classList={{ split: showTree() }}>
+        <div class="json-editor" ref={host} />
+
+        <Show when={showTree() && tree()}>
+          <div class="json-tree">
+            <For each={visibleNodes()}>
+              {(node) => (
+                <div
+                  class="tree-row"
+                  style={{ "padding-left": `${8 + node.depth * 14}px` }}
+                  onClick={() => setQuery(node.path)}
+                  title={node.path}
+                >
+                  <span
+                    class="tree-caret"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (node.has_children) toggleCollapse(node.id);
+                    }}
+                  >
+                    {node.has_children ? (collapsed().has(node.id) ? "▸" : "▾") : " "}
+                  </span>
+                  <span class="tree-key">{node.key || "$"}</span>
+                  <span class={`tree-kind kind-${node.kind}`}>{node.kind}</span>
+                  <span class="tree-preview">{node.preview}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
 
       <div class="json-status">
         <span class="json-hint">{status()}</span>
