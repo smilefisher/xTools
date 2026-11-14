@@ -3,6 +3,7 @@
 mod bench;
 mod capture;
 mod cmd;
+mod annotate;
 mod hotkey;
 mod json;
 mod search;
@@ -355,7 +356,22 @@ pub fn run() {
                         })
                         .unwrap_or((0, 0));
                     let started = std::time::Instant::now();
-                    let result = crate::shot::commit(&app, x + 100, y + 100, 320, 200, true);
+                    let result = crate::shot::commit(
+                        &app,
+                        x + 100,
+                        y + 100,
+                        320,
+                        200,
+                        true,
+                        &[crate::annotate::Op::Rect {
+                            x: 20.0,
+                            y: 20.0,
+                            w: 120.0,
+                            h: 80.0,
+                            color: Some("#ff0000".into()),
+                            width: Some(3.0),
+                        }],
+                    );
                     eprintln!(
                         "[probe-shot] commit 结果：{result:?}，用时 {:.0} ms",
                         started.elapsed().as_secs_f64() * 1000.0

@@ -414,3 +414,65 @@ kbd {
 .kind-number { color: #ffcc80; }
 .kind-boolean { color: #ce93d8; }
 .kind-object, .kind-array { color: #90caf9; }
+
+/* ---------------- 截图标注 ---------------- */
+.shot-canvas {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.shot-selection {
+  z-index: 3;
+}
+
+.shot-toolbar {
+  position: fixed;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgb(28 30 34 / 0.96);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+.shot-toolbar button {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #dfe3ea;
+  background: rgb(255 255 255 / 0.06);
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.shot-toolbar button:hover {
+  background: rgb(255 255 255 / 0.14);
+}
+
+.shot-toolbar button.active {
+  background: rgb(235 64 52 / 0.28);
+  border-color: rgb(235 64 52 / 0.6);
+  color: #fff;
+}
+
+.shot-toolbar button.primary {
+  background: rgb(91 140 255 / 0.28);
+  border-color: rgb(91 140 255 / 0.55);
+}
+
+.shot-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.shot-divider {
+  width: 1px;
+  height: 16px;
+  background: rgb(255 255 255 / 0.14);
+  margin: 0 2px;
+}

@@ -113,6 +113,7 @@ pub fn commit(
     width: i32,
     height: i32,
     pin: bool,
+    ops: &[crate::annotate::Op],
 ) -> Result<serde_json::Value, String> {
     if width < 2 || height < 2 {
         cancel(app);
@@ -124,7 +125,11 @@ pub fn commit(
     // 等一帧，确保覆盖窗已经从屏幕上消失
     std::thread::sleep(std::time::Duration::from_millis(80));
 
-    let frame = capture::capture_rect(x, y, width, height)?;
+    let mut frame = capture::capture_rect(x, y, width, height)?;
+    if !ops.is_empty() {
+        crate::annotate::apply(&mut frame, ops);
+    }
+    let frame = frame;
 
     let mut warnings: Vec<String> = Vec::new();
     let clipboard_ok = match frame.to_clipboard() {

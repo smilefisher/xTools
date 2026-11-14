@@ -189,8 +189,17 @@ pub fn shot_commit(
     width: i32,
     height: i32,
     pin: Option<bool>,
+    ops: Option<Vec<crate::annotate::Op>>,
 ) -> Result<serde_json::Value, String> {
-    crate::shot::commit(&app, x, y, width, height, pin.unwrap_or(false))
+    crate::shot::commit(
+        &app,
+        x,
+        y,
+        width,
+        height,
+        pin.unwrap_or(false),
+        &ops.unwrap_or_default(),
+    )
 }
 
 #[tauri::command]
