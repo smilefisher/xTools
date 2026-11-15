@@ -384,13 +384,13 @@ fn self_check() {
         formatted.output.replace('\n', " ")
     );
 
-    // 截图
+    // 剪贴板：图片 + 文本（锁屏时会被系统拒绝，报告里能直接看出来）
     match crate::capture::capture_rect(0, 0, 120, 80) {
         Ok(frame) => {
             let clip = frame.to_clipboard();
             let _ = writeln!(
                 report,
-                "\n[截图] 抓屏 ok（{}x{}）；剪贴板 {}",
+                "\n[截图] 抓屏 ok（{}x{}）；图片剪贴板 {}",
                 frame.width,
                 frame.height,
                 match clip {
@@ -403,6 +403,16 @@ fn self_check() {
             let _ = writeln!(report, "\n[截图] 抓屏失败：{err}");
         }
     }
+
+    let text_clip = crate::capture::copy_text("xTools self-check");
+    let _ = writeln!(
+        report,
+        "[剪贴板] 文本写入 {}",
+        match text_clip {
+            Ok(()) => "ok".to_string(),
+            Err(err) => format!("失败（{err}）"),
+        }
+    );
 
     print!("{report}");
 
@@ -559,6 +569,7 @@ pub fn run() {
             cmd::file_status,
             cmd::file_open,
             cmd::file_reveal,
+            cmd::copy_text,
             cmd::shot_rect,
             cmd::shot_begin,
             cmd::shot_commit,

@@ -180,6 +180,46 @@ pub fn capture_rect(x: i32, y: i32, width: i32, height: i32) -> Result<Frame, St
     }
 }
 
+/// 写入纯文本剪贴板（CF_UNICODETEXT）。
+pub fn copy_text(text: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+        };
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        use windows::Win32::System::Ole::CF_UNICODETEXT;
+
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let bytes = wide.len() * 2;
+
+        unsafe {
+            let handle = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(|e| e.to_string())?;
+            let ptr = GlobalLock(handle);
+            if ptr.is_null() {
+                return Err("GlobalLock 失败".into());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr as *mut u8, bytes);
+            let _ = GlobalUnlock(handle);
+
+            OpenClipboard(None).map_err(|e| e.to_string())?;
+            let _ = EmptyClipboard();
+            SetClipboardData(
+                CF_UNICODETEXT.0 as u32,
+                Some(windows::Win32::Foundation::HANDLE(handle.0)),
+            )
+            .map_err(|e| e.to_string())?;
+            let _ = CloseClipboard();
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = text;
+        Err("仅支持 Windows".into())
+    }
+}
+
 /// 贴图 PNG 的落盘目录。
 pub fn pin_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("xtools").join("pins"))

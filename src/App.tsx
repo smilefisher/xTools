@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -48,8 +48,16 @@ export default function App() {
   const [fileStatus, setFileStatus] = createSignal<FileStatus>({ ready: false, entries: 0 });
 
   let inputEl: HTMLInputElement | undefined;
+  let listEl: HTMLDivElement | undefined;
   let toastTimer: number | undefined;
   const token = { current: 0 };
+
+  // 选中项滚进可视区：列表长了以后方向键不会把选中项走出视野
+  createEffect(() => {
+    const index = selected();
+    const row = listEl?.querySelector<HTMLElement>(`[data-row="${index}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+  });
 
   const parsed = createMemo(() => parseQuery(query()));
 
@@ -154,6 +162,8 @@ export default function App() {
   const onKeyDown = (event: KeyboardEvent) => {
     if (composing() || event.isComposing || event.keyCode === 229) return;
 
+    const size = rows().length;
+
     switch (event.key) {
       case "Escape":
         event.preventDefault();
@@ -167,10 +177,44 @@ export default function App() {
         event.preventDefault();
         move(-1);
         break;
+      case "PageDown":
+        event.preventDefault();
+        setSelected((index) => Math.min(index + 8, Math.max(size - 1, 0)));
+        break;
+      case "PageUp":
+        event.preventDefault();
+        setSelected((index) => Math.max(index - 8, 0));
+        break;
+      case "Home":
+        event.preventDefault();
+        setSelected(0);
+        break;
+      case "End":
+        event.preventDefault();
+        setSelected(Math.max(size - 1, 0));
+        break;
       case "Enter":
         event.preventDefault();
         void activate(rows()[selected()], event.ctrlKey);
         break;
+      default:
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+          event.preventDefault();
+          void copySelection();
+        }
+    }
+  };
+
+  const copySelection = async () => {
+    const row = rows()[selected()];
+    if (!row) return;
+    const text =
+      row.kind === "app" ? row.hit.target : row.kind === "file" ? row.hit.path : row.text;
+    try {
+      await invoke("copy_text", { text });
+      flash("已复制");
+    } catch (err) {
+      flash(`复制失败：${String(err)}`);
     }
   };
 
@@ -214,6 +258,7 @@ export default function App() {
   const renderApp = (item: AppHit, index: number) => (
     <div
       class="row"
+      data-row={index}
       classList={{ active: index === selected() }}
       onMouseEnter={() => setSelected(index)}
       onClick={() => void activate({ kind: "app", hit: item })}
@@ -257,6 +302,7 @@ export default function App() {
   const renderFile = (item: FileHit, index: number) => (
     <div
       class="row"
+      data-row={index}
       classList={{ active: index === selected() }}
       onMouseEnter={() => setSelected(index)}
       onClick={() => void activate({ kind: "file", hit: item })}
@@ -316,7 +362,7 @@ export default function App() {
         </Show>
       </div>
 
-      <div class="list">
+      <div class="list" ref={listEl}>
         <Show when={jsonIntent() !== null}>
           <div
             class="row"

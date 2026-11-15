@@ -201,6 +201,11 @@ pub fn file_reveal(path: String) -> Result<(), String> {
     crate::search::file_index::reveal(&path)
 }
 
+#[tauri::command]
+pub fn copy_text(text: String) -> Result<(), String> {
+    crate::capture::copy_text(&text)
+}
+
 // ---------------------------------------------------------------- 截图 / 贴图
 
 #[tauri::command]
