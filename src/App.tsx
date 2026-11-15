@@ -46,6 +46,7 @@ export default function App() {
   const [composing, setComposing] = createSignal(false);
   const [icons, setIcons] = createSignal<Record<number, string>>({});
   const [fileStatus, setFileStatus] = createSignal<FileStatus>({ ready: false, entries: 0 });
+  const [menu, setMenu] = createSignal<{ x: number; y: number; row: Row } | null>(null);
 
   let inputEl: HTMLInputElement | undefined;
   let listEl: HTMLDivElement | undefined;
@@ -208,6 +209,10 @@ export default function App() {
   const copySelection = async () => {
     const row = rows()[selected()];
     if (!row) return;
+    await copyRow(row);
+  };
+
+  const copyRow = async (row: Row) => {
     const text =
       row.kind === "app" ? row.hit.target : row.kind === "file" ? row.hit.path : row.text;
     try {
@@ -215,6 +220,28 @@ export default function App() {
       flash("已复制");
     } catch (err) {
       flash(`复制失败：${String(err)}`);
+    }
+  };
+
+  const runMenuAction = async (row: Row, action: string) => {
+    setMenu(null);
+    try {
+      if (row.kind === "app") {
+        if (action === "open") await invoke("app_launch", { id: row.hit.id, admin: false });
+        if (action === "admin") await invoke("app_launch", { id: row.hit.id, admin: true });
+        if (action === "copy") await copyRow(row);
+        if (action === "open" || action === "admin") void invoke("hide_palette");
+      } else if (row.kind === "file") {
+        if (action === "open") await invoke("file_open", { path: row.hit.path });
+        if (action === "reveal") await invoke("file_reveal", { path: row.hit.path });
+        if (action === "copy") await copyRow(row);
+        if (action === "open" || action === "reveal") void invoke("hide_palette");
+      } else if (action === "open") {
+        await invoke("json_open", { text: row.text || null });
+        void invoke("hide_palette");
+      }
+    } catch (err) {
+      flash(`操作失败：${String(err)}`);
     }
   };
 
@@ -262,6 +289,11 @@ export default function App() {
       classList={{ active: index === selected() }}
       onMouseEnter={() => setSelected(index)}
       onClick={() => void activate({ kind: "app", hit: item })}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setSelected(index);
+        setMenu({ x: event.clientX, y: event.clientY, row: { kind: "app", hit: item } });
+      }}
     >
       <Show
         when={iconFor(item)}
@@ -306,6 +338,11 @@ export default function App() {
       classList={{ active: index === selected() }}
       onMouseEnter={() => setSelected(index)}
       onClick={() => void activate({ kind: "file", hit: item })}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setSelected(index);
+        setMenu({ x: event.clientX, y: event.clientY, row: { kind: "file", hit: item } });
+      }}
     >
       <span class="icon letter">{item.is_dir ? "▸" : "·"}</span>
       <span class="text">
@@ -328,7 +365,39 @@ export default function App() {
   );
 
   return (
-    <div class="palette" onKeyDown={onKeyDown}>
+    <div class="palette" onKeyDown={onKeyDown} onClick={() => setMenu(null)}>
+      <Show when={menu()}>
+        {(state) => (
+          <div
+            class="ctx-menu"
+            style={{
+              left: `${Math.min(state().x, 520)}px`,
+              top: `${Math.min(state().y, 320)}px`,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Show when={state().row.kind === "app"}>
+              <button onClick={() => void runMenuAction(state().row, "open")}>打开</button>
+              <button onClick={() => void runMenuAction(state().row, "admin")}>
+                以管理员身份运行
+              </button>
+              <button onClick={() => void runMenuAction(state().row, "copy")}>复制目标路径</button>
+            </Show>
+            <Show when={state().row.kind === "file"}>
+              <button onClick={() => void runMenuAction(state().row, "open")}>打开</button>
+              <button onClick={() => void runMenuAction(state().row, "reveal")}>
+                打开所在文件夹
+              </button>
+              <button onClick={() => void runMenuAction(state().row, "copy")}>复制路径</button>
+            </Show>
+            <Show when={state().row.kind === "json"}>
+              <button onClick={() => void runMenuAction(state().row, "open")}>
+                在 JSON 工具中打开
+              </button>
+            </Show>
+          </div>
+        )}
+      </Show>
       <div class="search">
         <span class="caret">⌘</span>
         <input

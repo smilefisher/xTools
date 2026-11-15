@@ -135,7 +135,7 @@ pub fn app_search(state: State<'_, AppState>, query: String, limit: Option<usize
 }
 
 #[tauri::command]
-pub fn app_launch(state: State<'_, AppState>, id: u32) -> Result<(), String> {
+pub fn app_launch(state: State<'_, AppState>, id: u32, admin: Option<bool>) -> Result<(), String> {
     let path = {
         let index = state.index.lock().unwrap();
         index.find(id).map(|entry| entry.path.clone())
@@ -144,7 +144,7 @@ pub fn app_launch(state: State<'_, AppState>, id: u32) -> Result<(), String> {
         return Err("找不到该应用，索引可能已过期".into());
     };
     state.usage.lock().unwrap().record(id);
-    crate::search::app_index::launch(&path, false)
+    crate::search::app_index::launch(&path, admin.unwrap_or(false))
 }
 
 /// 图标以 ArrayBuffer 回传，前端直接转 blob URL，避免 base64 膨胀。
