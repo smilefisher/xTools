@@ -511,6 +511,59 @@ pub fn run() {
         return;
     }
 
+    if std::env::args().any(|arg| arg == "--probe-outline") {
+        // 造一份 ~50MB 的文档，验证「不建树也能看结构」
+        let started = std::time::Instant::now();
+        let mut doc = String::with_capacity(52 << 20);
+        doc.push_str("{\"meta\":{\"source\":\"probe\"},\"items\":[");
+        for i in 0..600_000 {
+            if i > 0 {
+                doc.push(',');
+            }
+            doc.push_str(&format!(
+                "{{\"id\":{i},\"name\":\"item-{i}\",\"tags\":[\"a\",\"b\"]}}"
+            ));
+        }
+        doc.push_str("]}");
+        println!(
+            "文档：{:.1} MB，生成用时 {:.1}s",
+            doc.len() as f64 / 1048576.0,
+            started.elapsed().as_secs_f64()
+        );
+
+        let started = std::time::Instant::now();
+        let result = crate::json::outline(&doc, 2, 200);
+        println!(
+            "大纲：ok={} 节点={} 截断={} 用时 {:.3}s",
+            result.ok,
+            result.nodes.len(),
+            result.truncated,
+            started.elapsed().as_secs_f64()
+        );
+        for node in result.nodes.iter().take(6) {
+            println!(
+                "  {}{}  {}  {:.1} KB",
+                "  ".repeat(node.depth as usize),
+                node.key,
+                node.kind,
+                node.bytes as f64 / 1024.0
+            );
+        }
+
+        if let Some(biggest) = result.nodes.iter().max_by_key(|n| n.bytes) {
+            let started = std::time::Instant::now();
+            let sliced = crate::json::slice(&doc, biggest.start, biggest.end, "2");
+            println!(
+                "展开最大节点 {}（{:.1} MB）：ok={} 用时 {:.3}s",
+                biggest.key,
+                biggest.bytes as f64 / 1048576.0,
+                sliced.ok,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        return;
+    }
+
     if std::env::args().any(|arg| arg == "--self-check") {
         self_check();
         return;
@@ -581,6 +634,8 @@ pub fn run() {
             cmd::json_validate,
             cmd::json_query,
             cmd::json_tree,
+            cmd::json_outline,
+            cmd::json_slice,
             cmd::json_open,
             cmd::json_close,
             cmd::json_take_pending,

@@ -35,6 +35,24 @@ type JsonTree = {
   error: { message: string; line: number; column: number } | null;
 };
 
+type JsonOutlineNode = {
+  depth: number;
+  key: string;
+  kind: string;
+  start: number;
+  end: number;
+  bytes: number;
+};
+
+type JsonOutline = {
+  ok: boolean;
+  nodes: JsonOutlineNode[];
+  truncated: boolean;
+  root_kind: string;
+  elapsed_ms: number;
+  error: { message: string; line: number; column: number } | null;
+};
+
 const SAMPLE = `{
   "name": "xTools",
   "version": "0.1.0",
@@ -50,6 +68,7 @@ export default function JsonTool() {
   const [showTree, setShowTree] = createSignal(false);
   const [tree, setTree] = createSignal<JsonTree | null>(null);
   const [collapsed, setCollapsed] = createSignal<Set<number>>(new Set());
+  const [outlineData, setOutlineData] = createSignal<JsonOutline | null>(null);
   let host: HTMLDivElement | undefined;
   let view: EditorView | undefined;
 
@@ -161,6 +180,54 @@ export default function JsonTool() {
     }
   };
 
+  const toggleOutline = async () => {
+    if (outlineData()) {
+      setOutlineData(null);
+      setShowTree(false);
+      return;
+    }
+    try {
+      const started = performance.now();
+      const result = await invoke<JsonOutline>("json_outline", {
+        text: text(),
+        depth: 2,
+        limit: 500,
+      });
+      if (!result.ok) {
+        const err = result.error;
+        setError(err ? `${err.message}（第 ${err.line} 行）` : "解析失败");
+        return;
+      }
+      setOutlineData(result);
+      setShowTree(false);
+      setStatus(
+        `大纲：${result.nodes.length} 个节点${result.truncated ? "（已截断）" : ""} · ${result.elapsed_ms.toFixed(1)} ms（端到端 ${(performance.now() - started).toFixed(0)} ms）`,
+      );
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const openSlice = async (node: JsonOutlineNode) => {
+    try {
+      const result = await invoke<JsonResult>("json_slice", {
+        text: text(),
+        start: node.start,
+        end: node.end,
+        indent: "2",
+      });
+      if (!result.ok) {
+        setError(result.error ? result.error.message : "片段解析失败");
+        return;
+      }
+      replace(result.output);
+      setOutlineData(null);
+      setStatus(`已展开 ${node.key}（${(node.bytes / 1024).toFixed(1)} KB）`);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   onMount(() => {
     void init();
   });
@@ -229,10 +296,33 @@ export default function JsonTool() {
         />
         <button onClick={() => void run("query")}>查询</button>
         <button onClick={() => void toggleTree()}>{showTree() ? "收起树" : "树视图"}</button>
+        <button onClick={() => void toggleOutline()}>
+          {outlineData() ? "收起大纲" : "大纲"}
+        </button>
       </div>
 
-      <div class="json-body" classList={{ split: showTree() }}>
+      <div class="json-body" classList={{ split: showTree() || outlineData() !== null }}>
         <div class="json-editor" ref={host} />
+
+        <Show when={outlineData()}>
+          <div class="json-tree">
+            <For each={outlineData()!.nodes}>
+              {(node) => (
+                <div
+                  class="tree-row"
+                  style={{ "padding-left": `${8 + node.depth * 14}px` }}
+                  onClick={() => void openSlice(node)}
+                  title={`点开只解析这一段（${node.bytes} 字节）`}
+                >
+                  <span class="tree-caret"> </span>
+                  <span class="tree-key">{node.key}</span>
+                  <span class={`tree-kind kind-${node.kind}`}>{node.kind}</span>
+                  <span class="tree-preview">{(node.bytes / 1024).toFixed(1)} KB</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
 
         <Show when={showTree() && tree()}>
           <div class="json-tree">

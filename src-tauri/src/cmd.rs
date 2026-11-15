@@ -301,6 +301,25 @@ pub fn json_tree(text: String, limit: Option<usize>) -> crate::json::JsonTree {
 }
 
 #[tauri::command]
+pub fn json_outline(
+    text: String,
+    depth: Option<u8>,
+    limit: Option<usize>,
+) -> crate::json::JsonOutline {
+    crate::json::outline(&text, depth.unwrap_or(2), limit.unwrap_or(500))
+}
+
+#[tauri::command]
+pub fn json_slice(
+    text: String,
+    start: usize,
+    end: usize,
+    indent: Option<String>,
+) -> crate::json::JsonResult {
+    crate::json::slice(&text, start, end, indent.as_deref().unwrap_or("2"))
+}
+
+#[tauri::command]
 pub fn json_open(app: AppHandle, text: Option<String>) -> Result<(), String> {
     crate::shot::open_json(&app, text)
 }

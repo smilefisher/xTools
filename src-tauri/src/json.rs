@@ -530,9 +530,407 @@ fn preview_of(value: &Value) -> String {
     }
 }
 
+/// 大文件大纲：不建整树，只扫出顶层结构（键名 + 类型 + 字节区间）。
+#[derive(Debug, Serialize)]
+pub struct OutlineNode {
+    pub depth: u8,
+    pub key: String,
+    pub kind: &'static str,
+    pub start: usize,
+    pub end: usize,
+    pub bytes: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonOutline {
+    pub ok: bool,
+    pub nodes: Vec<OutlineNode>,
+    pub truncated: bool,
+    pub root_kind: &'static str,
+    pub elapsed_ms: f64,
+    pub error: Option<JsonError>,
+}
+
+/// 结构扫描器：只走一遍字节，跳过深层内容，内存 O(节点数)。
+///
+/// 用于 >20MB 的文档——整树解析会吃掉几百 MB，这里只取「有哪些键、各自多大」。
+pub fn outline(text: &str, max_depth: u8, limit: usize) -> JsonOutline {
+    let started = std::time::Instant::now();
+    let bytes = text.as_bytes();
+    let limit = limit.clamp(8, 50_000);
+    let max_depth = max_depth.clamp(1, 4);
+
+    let mut scanner = Scanner {
+        bytes,
+        pos: 0,
+        nodes: Vec::new(),
+        limit,
+        max_depth,
+        truncated: false,
+        error: None,
+    };
+
+    scanner.skip_ws();
+    let root_pos = scanner.pos;
+    let root_kind = match scanner.peek() {
+        Some(b'{') => "object",
+        Some(b'[') => "array",
+        Some(b'"') => "string",
+        Some(_) => "scalar",
+        None => {
+            return JsonOutline {
+                ok: false,
+                nodes: Vec::new(),
+                truncated: false,
+                root_kind: "unknown",
+                elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+                error: Some(JsonError::plain("内容为空")),
+            }
+        }
+    };
+
+    scanner.scan_value(0, String::from("$"));
+    scanner.skip_ws();
+    let end = scanner.pos;
+
+    if scanner.nodes.is_empty() && scanner.error.is_none() {
+        scanner.nodes.push(OutlineNode {
+            depth: 0,
+            key: "$".into(),
+            kind: root_kind,
+            start: root_pos,
+            end,
+            bytes: end.saturating_sub(root_pos),
+        });
+    }
+
+    JsonOutline {
+        ok: scanner.error.is_none(),
+        nodes: scanner.nodes,
+        truncated: scanner.truncated,
+        root_kind,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        error: scanner.error,
+    }
+}
+
+struct Scanner<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    nodes: Vec<OutlineNode>,
+    limit: usize,
+    max_depth: u8,
+    truncated: bool,
+    error: Option<JsonError>,
+}
+
+impl<'a> Scanner<'a> {
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    fn bump(&mut self) {
+        self.pos += 1;
+    }
+
+    fn skip_ws(&mut self) {
+        while let Some(b) = self.peek() {
+            if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn fail(&mut self, message: &str) {
+        if self.error.is_none() {
+            self.error = Some(JsonError::plain(message));
+        }
+    }
+
+    fn scan_string(&mut self) -> Option<String> {
+        // 进入时 pos 指向开引号
+        if self.peek() != Some(b'"') {
+            return None;
+        }
+        self.bump();
+        let start = self.pos;
+        while let Some(b) = self.peek() {
+            match b {
+                b'\\' => {
+                    self.bump();
+                    self.bump();
+                }
+                b'"' => {
+                    let raw = &self.bytes[start..self.pos];
+                    self.bump();
+                    return Some(String::from_utf8_lossy(raw).into_owned());
+                }
+                _ => self.bump(),
+            }
+        }
+        self.fail("字符串没有闭合");
+        None
+    }
+
+    fn scan_scalar(&mut self) {
+        while let Some(b) = self.peek() {
+            if b == b',' || b == b'}' || b == b']' || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t'
+            {
+                break;
+            }
+            self.bump();
+        }
+    }
+
+    /// 扫描一个值，depth 为该值所在层级；返回其结束位置。
+    fn scan_value(&mut self, depth: u8, key: String) {
+        self.skip_ws();
+        let start = self.pos;
+
+        match self.peek() {
+            Some(b'{') => {
+                self.bump();
+                // 容器在「开括号」时就登记，闭括号时补结束位置——
+                // 否则大数组会把上限耗在子元素上，父节点反而记不下来
+                let idx = self.begin(depth, key, "object", start);
+                self.scan_object(depth, idx);
+            }
+            Some(b'[') => {
+                self.bump();
+                let idx = self.begin(depth, key, "array", start);
+                self.scan_array(depth, idx);
+            }
+            Some(b'"') => {
+                self.scan_string();
+                self.record(depth, key, "string", start, self.pos);
+            }
+            Some(b't') | Some(b'f') | Some(b'n') => {
+                self.scan_scalar();
+                if self.pos == start {
+                    self.fail("字面量异常");
+                    return;
+                }
+                let kind = if self.bytes[start] == b'n' { "null" } else { "boolean" };
+                self.record(depth, key, kind, start, self.pos);
+            }
+            Some(b'}') | Some(b']') | Some(b',') | Some(b':') => {
+                self.fail("值的位置出现了结构字符");
+            }
+            Some(_) => {
+                self.scan_scalar();
+                if self.pos == start {
+                    self.fail("数值解析失败");
+                    return;
+                }
+                self.record(depth, key, "number", start, self.pos);
+            }
+            None => self.fail("内容意外结束"),
+        }
+    }
+
+    fn begin(
+        &mut self,
+        depth: u8,
+        key: String,
+        kind: &'static str,
+        start: usize,
+    ) -> Option<usize> {
+        if key.is_empty() || depth > self.max_depth {
+            return None;
+        }
+        if self.nodes.len() >= self.limit {
+            self.truncated = true;
+            return None;
+        }
+        let index = self.nodes.len();
+        self.nodes.push(OutlineNode {
+            depth,
+            key,
+            kind,
+            start,
+            end: start,
+            bytes: 0,
+        });
+        Some(index)
+    }
+
+    fn finish(&mut self, index: Option<usize>, end: usize) {
+        if let Some(index) = index {
+            let node = &mut self.nodes[index];
+            node.end = end;
+            node.bytes = end.saturating_sub(node.start);
+        }
+    }
+
+    fn record(&mut self, depth: u8, key: String, kind: &'static str, start: usize, end: usize) {
+        // 空 key 表示「不登记」（大数组只展开前若干个元素，避免刷屏）
+        if key.is_empty() || depth > self.max_depth {
+            return;
+        }
+        if self.nodes.len() >= self.limit {
+            self.truncated = true;
+            return;
+        }
+        self.nodes.push(OutlineNode {
+            depth,
+            key,
+            kind,
+            start,
+            end,
+            bytes: end.saturating_sub(start),
+        });
+    }
+
+    fn scan_object(&mut self, depth: u8, node: Option<usize>) {
+        // 已消费 '{'
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some(b'}') => {
+                    self.bump();
+                    self.finish(node, self.pos);
+                    return;
+                }
+                Some(b',') => {
+                    self.bump();
+                    continue;
+                }
+                Some(b'"') => {
+                    let Some(child_key) = self.scan_string() else { return };
+                    self.skip_ws();
+                    if self.peek() != Some(b':') {
+                        self.fail("对象缺少冒号");
+                        return;
+                    }
+                    self.bump();
+                    self.scan_value(depth + 1, child_key);
+                }
+                Some(_) => {
+                    self.fail("对象里出现意外字符");
+                    return;
+                }
+                None => {
+                    self.fail("对象没有闭合");
+                    return;
+                }
+            }
+        }
+    }
+
+    fn scan_array(&mut self, depth: u8, node: Option<usize>) {
+        let mut index = 0usize;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some(b']') => {
+                    self.bump();
+                    self.finish(node, self.pos);
+                    return;
+                }
+                Some(b',') => {
+                    self.bump();
+                    continue;
+                }
+                Some(_) => {
+                    let before = self.pos;
+                    // 数组只展开前 20 个元素，剩下的扫过去但不登记
+                    let key = if index < 20 {
+                        format!("[{index}]")
+                    } else {
+                        String::new()
+                    };
+                    self.scan_value(depth + 1, key);
+                    if self.pos == before {
+                        self.fail("数组元素解析无进展");
+                        return;
+                    }
+                    index += 1;
+                }
+                None => {
+                    self.fail("数组没有闭合");
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// 取一段字节区间并格式化——大文件里点开某个节点时才解析这一小块。
+pub fn slice(text: &str, start: usize, end: usize, indent: &str) -> JsonResult {
+    let started = std::time::Instant::now();
+    if start >= end || end > text.len() {
+        return err_result(JsonError::plain("区间无效"), 0.0, 0);
+    }
+    let piece = &text[start..end];
+    let mut result = format(piece, indent, false);
+    result.elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outline_lists_top_level_keys() {
+        let doc = r#"{"a":1,"b":{"c":[1,2,3]},"d":"文本"}"#;
+        let result = outline(doc, 2, 100);
+        assert!(result.ok, "{:?}", result.error);
+        assert_eq!(result.root_kind, "object");
+
+        let keys: Vec<&str> = result.nodes.iter().map(|n| n.key.as_str()).collect();
+        assert!(keys.contains(&"a"));
+        assert!(keys.contains(&"b"));
+        assert!(keys.contains(&"d"));
+        // 嵌套层也能拿到 c
+        assert!(keys.contains(&"c"));
+
+        // 区间必须能切回合法 JSON
+        let b = result.nodes.iter().find(|n| n.key == "b").unwrap();
+        let sliced = slice(doc, b.start, b.end, "2");
+        assert!(sliced.ok);
+    }
+
+    #[test]
+    fn outline_handles_escaped_strings_and_numbers() {
+        let doc = r#"{"k\"q":"a\"b\\c","n":-1.5e10,"t":true,"z":null}"#;
+        let result = outline(doc, 1, 100);
+        assert!(result.ok, "{:?}", result.error);
+        let count = result.nodes.len();
+        assert!(count >= 4, "节点太少：{count}");
+    }
+
+    #[test]
+    fn outline_reports_broken_document() {
+        let result = outline(r#"{"a":[1,2}"#, 2, 100);
+        assert!(!result.ok);
+        assert!(result.error.is_some());
+    }
+
+    #[test]
+    fn outline_scales_to_large_documents() {
+        // 约 8MB、20 万条数组元素：整树解析要几百 MB，大纲扫描应当毫秒级
+        let mut doc = String::with_capacity(9 << 20);
+        doc.push_str("{\"items\":[");
+        for i in 0..200_000 {
+            if i > 0 {
+                doc.push(',');
+            }
+            doc.push_str(&format!("{{\"id\":{i},\"name\":\"item-{i}\"}}"));
+        }
+        doc.push_str("],\"meta\":{\"count\":200000}}");
+
+        let started = std::time::Instant::now();
+        let result = outline(&doc, 1, 100);
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+
+        assert!(result.ok, "{:?}", result.error);
+        assert!(result.nodes.iter().any(|n| n.key == "items"));
+        assert!(result.nodes.iter().any(|n| n.key == "meta"));
+        assert!(elapsed < 2000.0, "扫描太慢：{elapsed} ms");
+    }
 
     #[test]
     fn validate_handles_large_documents() {
