@@ -4,7 +4,7 @@
 //! 绝不重建窗口或重新加载 WebView —— 这是首帧延迟能压到几十毫秒的前提。
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, WebviewUrl, WebviewWindow,
@@ -47,6 +47,8 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 static AUTOHIDE_OFF: AtomicBool = AtomicBool::new(false);
+/// 最近一次显示的时间戳（epoch ms）：用来给「刚弹出」加失焦宽限期
+static SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
 
 pub fn autohide_disabled() -> bool {
     AUTOHIDE_OFF.load(Ordering::Relaxed)
@@ -54,6 +56,19 @@ pub fn autohide_disabled() -> bool {
 
 pub fn set_autohide_disabled(v: bool) {
     AUTOHIDE_OFF.store(v, Ordering::Relaxed);
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 面板是否在 `within_ms` 毫秒内刚显示过。
+pub fn shown_within(within_ms: u64) -> bool {
+    let shown = SHOWN_AT_MS.load(Ordering::Relaxed);
+    shown != 0 && now_ms().saturating_sub(shown) < within_ms
 }
 
 /// 热键 / 托盘点击的统一入口：可见就收起，不可见就唤起。
@@ -84,6 +99,19 @@ pub fn show_palette(app: &AppHandle) {
     let _ = win.show();
     let _ = win.set_focus();
     force_foreground(&win);
+    SHOWN_AT_MS.store(now_ms(), Ordering::Relaxed);
+
+    // 抢焦点在部分场景会失败（后台进程/其它窗口正在前台），补两次重试
+    let retry = win.clone();
+    std::thread::spawn(move || {
+        for delay in [60u64, 160] {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+            if retry.is_visible().unwrap_or(false) {
+                let _ = retry.set_focus();
+                force_foreground(&retry);
+            }
+        }
+    });
 
     crate::bench::mark_shown();
     let _ = win.emit("palette:shown", ());

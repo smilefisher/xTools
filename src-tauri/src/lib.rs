@@ -825,9 +825,12 @@ pub fn run() {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Focused(false) => {
+                // 刚弹出的 400ms 内忽略失焦：这时窗口可能还没抢到焦点，
+                // 系统会先发一次 Focused(false)，不能当成「用户点了别处」
                 if window.label() == MAIN_LABEL
                     && !bench::is_running()
                     && !win::autohide_disabled()
+                    && !win::shown_within(400)
                 {
                     let _ = window.hide();
                 }
