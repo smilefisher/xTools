@@ -438,6 +438,52 @@ pub fn run() {
         return;
     }
 
+    if std::env::args().any(|arg| arg == "--probe-usn") {
+        let volume = xtools_indexer::profile_volume().unwrap_or('C');
+        match xtools_indexer::usn::journal::open(volume) {
+            Ok(info) => {
+                println!("日志 id={} next_usn={}", info.id, info.next_usn);
+                let started = std::time::Instant::now();
+
+                // 造两次真实变更：建文件 → 改名 → 删除
+                let dir = std::env::temp_dir();
+                let path = dir.join(format!("xtools-usn-probe-{}.tmp", info.next_usn));
+                let _ = std::fs::write(&path, b"probe");
+                let renamed = path.with_extension("renamed");
+                let _ = std::fs::rename(&path, &renamed);
+                let _ = std::fs::remove_file(&renamed);
+
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                match xtools_indexer::usn::journal::read(volume, info.id, info.next_usn) {
+                    Ok((changes, next)) => {
+                        println!(
+                            "读到 {} 条变更（{:.2}s），next_usn {} → {}",
+                            changes.len(),
+                            started.elapsed().as_secs_f64(),
+                            info.next_usn,
+                            next
+                        );
+                        for change in changes.iter().take(12) {
+                            match change {
+                                xtools_indexer::usn::Change::Upsert {
+                                    frn, parent, name, is_dir,
+                                } => println!(
+                                    "  + {name}  (frn={frn} parent={parent} dir={is_dir})"
+                                ),
+                                xtools_indexer::usn::Change::Delete { frn } => {
+                                    println!("  - frn={frn}")
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => println!("读取变更失败：{err}"),
+                }
+            }
+            Err(err) => println!("打开 USN 日志失败（需要管理员）：{err}"),
+        }
+        return;
+    }
+
     if std::env::args().any(|arg| arg == "--probe-mft") {
         probe_mft();
         return;

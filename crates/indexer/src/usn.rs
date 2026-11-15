@@ -22,6 +22,49 @@ pub struct RawRecord {
     pub is_dir: bool,
 }
 
+/// 在一条记录里定位「文件属性 / 文件名长度 / 文件名偏移」。
+///
+/// 不同 Windows 版本上 USN_RECORD_V2 的头部长度有 52 与 60 两种（实测 Win10 22H2 是 60），
+/// 与其写死，不如按「名字必须以记录末尾为界」自动识别。
+fn locate_name(buffer: &[u8], base: usize, record_len: usize) -> Option<(usize, usize, u32)> {
+    const CANDIDATES: [(usize, usize); 3] = [(56, 58), (48, 50), (52, 54)];
+
+    for (len_off, name_off_off) in CANDIDATES {
+        if base + name_off_off + 2 > buffer.len() || base + len_off + 2 > buffer.len() {
+            continue;
+        }
+        let name_len = u16::from_le_bytes([buffer[base + len_off], buffer[base + len_off + 1]]) as usize;
+        let name_off =
+            u16::from_le_bytes([buffer[base + name_off_off], buffer[base + name_off_off + 1]]) as usize;
+
+        if name_len == 0 || name_off < 40 || name_off + name_len > record_len {
+            continue;
+        }
+        // 名字必须落在记录内，且不能是控制字符
+        let start = base + name_off;
+        if start + name_len > buffer.len() {
+            continue;
+        }
+        let units: Vec<u16> = buffer[start..start + name_len]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        if units.iter().any(|unit| *unit < 0x20) {
+            continue;
+        }
+
+        let attrs = u32::from_le_bytes([
+            buffer[base + len_off - 4],
+            buffer[base + len_off - 3],
+            buffer[base + len_off - 2],
+            buffer[base + len_off - 1],
+        ]);
+        return Some((name_off, name_len, attrs));
+    }
+
+    None
+}
+
 /// 解析 `FSCTL_ENUM_USN_DATA` 的输出缓冲。
 ///
 /// 前 8 字节是下一次调用要用的起始 FRN，后面是连续的 `USN_RECORD_V2`。
@@ -37,35 +80,27 @@ pub fn parse_usn_buffer(buffer: &[u8], out: &mut Vec<RawRecord>) -> Option<u64> 
         if length < 8 || offset + length > buffer.len() {
             break;
         }
-        // 记录头（V2）：
-        //   0 length(4) | 4 major(2) | 6 minor(2) | 8 frn(8) | 16 parent(8) | 24 usn(8)
-        //   32 reason(4) | 36 source(4) | 40 security(4) | 44 attrs(4)
-        //   48 name_len(2) | 50 name_off(2) | 52 name...
+
+        // 记录头（V2）：length 4 | major 2 | minor 2 | frn 8 | parent 8 | usn 8 ... 名字在尾部
         if length >= 52 {
             let major = u16::from_le_bytes(buffer[offset + 4..offset + 6].try_into().ok()?);
             if major == USN_RECORD_V2 {
                 let frn = read_u64(buffer, offset + 8);
                 let parent = read_u64(buffer, offset + 16);
-                let attrs = u32::from_le_bytes(buffer[offset + 44..offset + 48].try_into().ok()?);
-                let name_len = u16::from_le_bytes(buffer[offset + 48..offset + 50].try_into().ok()?)
-                    as usize;
-                let name_off = u16::from_le_bytes(buffer[offset + 50..offset + 52].try_into().ok()?)
-                    as usize;
 
-                if name_off + name_len <= length {
-                    let bytes = &buffer[offset + name_off..offset + name_off + name_len];
-                    let units: Vec<u16> = bytes
+                if let Some((name_off, name_len, attrs)) = locate_name(buffer, offset, length) {
+                    let start = offset + name_off;
+                    let units: Vec<u16> = buffer[start..start + name_len]
                         .chunks_exact(2)
                         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                         .collect();
                     let name = String::from_utf16_lossy(&units);
-                    let is_dir = attrs & 0x10 != 0; // FILE_ATTRIBUTE_DIRECTORY
                     if !name.is_empty() {
                         out.push(RawRecord {
                             frn,
                             parent,
                             name,
-                            is_dir,
+                            is_dir: attrs & 0x10 != 0,
                         });
                     }
                 }
@@ -157,6 +192,10 @@ pub fn build_from_records(label: &str, records: Vec<RawRecord>) -> (MftIndex, us
         };
         index.entries[*idx as usize].parent = parent;
     }
+
+    // 收缩到实际大小：3M 条时能省下几十 MB
+    index.names.shrink_to_fit();
+    index.entries.shrink_to_fit();
 
     (
         MftIndex {
@@ -251,11 +290,6 @@ pub fn parse_changes(buffer: &[u8]) -> Option<(Vec<Change>, i64)> {
             let frn = read_u64(buffer, offset + 8);
             let parent = read_u64(buffer, offset + 16);
             let reason = u32::from_le_bytes(buffer[offset + 32..offset + 36].try_into().ok()?);
-            let attrs = u32::from_le_bytes(buffer[offset + 44..offset + 48].try_into().ok()?);
-            let name_len =
-                u16::from_le_bytes(buffer[offset + 48..offset + 50].try_into().ok()?) as usize;
-            let name_off =
-                u16::from_le_bytes(buffer[offset + 50..offset + 52].try_into().ok()?) as usize;
 
             const FILE_DELETE: u32 = 0x200;
             const FILE_CREATE: u32 = 0x100;
@@ -263,22 +297,22 @@ pub fn parse_changes(buffer: &[u8]) -> Option<(Vec<Change>, i64)> {
 
             if reason & FILE_DELETE != 0 && reason & FILE_CREATE == 0 {
                 changes.push(Change::Delete { frn });
-            } else if reason & (FILE_CREATE | FILE_RENAME_NEW_NAME) != 0
-                && name_off + name_len <= length
-            {
-                let bytes = &buffer[offset + name_off..offset + name_off + name_len];
-                let units: Vec<u16> = bytes
-                    .chunks_exact(2)
-                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                    .collect();
-                let name = String::from_utf16_lossy(&units);
-                if !name.is_empty() {
-                    changes.push(Change::Upsert {
-                        frn,
-                        parent,
-                        name,
-                        is_dir: attrs & 0x10 != 0,
-                    });
+            } else if reason & (FILE_CREATE | FILE_RENAME_NEW_NAME) != 0 {
+                if let Some((name_off, name_len, attrs)) = locate_name(buffer, offset, length) {
+                    let start = offset + name_off;
+                    let units: Vec<u16> = buffer[start..start + name_len]
+                        .chunks_exact(2)
+                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                        .collect();
+                    let name = String::from_utf16_lossy(&units);
+                    if !name.is_empty() {
+                        changes.push(Change::Upsert {
+                            frn,
+                            parent,
+                            name,
+                            is_dir: attrs & 0x10 != 0,
+                        });
+                    }
                 }
             }
         }
@@ -458,19 +492,31 @@ mod win {
 
     /// 枚举一个卷的 MFT 记录。调用者需要有管理员权限。
     pub fn enumerate_volume(letter: char) -> io::Result<Vec<RawRecord>> {
+        let debug = std::env::var_os("XTOOLS_DEBUG").is_some();
         let guard = open_volume(letter)?;
+
+        // HighUsn 必须 ≤ 日志的 NextUsn，传 i64::MAX 会被内核拒绝（实测返回 0 条）
+        let high_usn = match super::journal::open(letter) {
+            Ok(info) if info.next_usn > 0 => info.next_usn,
+            _ => 0x0FFF_FFFF_FFFF_FFFF,
+        };
+        if debug {
+            eprintln!("[mft] 枚举 {letter}:，HighUsn={high_usn}");
+        }
+
         let mut records = Vec::with_capacity(1 << 20);
         let mut input = MftEnumData {
             start_file_reference_number: 0,
             low_usn: 0,
-            high_usn: i64::MAX,
+            high_usn,
         };
 
-        let mut buffer = vec![0u8; 1 << 20];
+        let mut buffer = vec![0u8; 8 << 20];
+        let mut rounds = 0usize;
 
         loop {
             let mut returned: u32 = 0;
-            let ok = unsafe {
+            let result = unsafe {
                 DeviceIoControl(
                     guard.handle(),
                     FSCTL_ENUM_USN_DATA,
@@ -483,9 +529,64 @@ mod win {
                 )
             };
 
-            if ok.is_err() || returned == 0 {
-                // 枚举结束（ERROR_HANDLE_EOF）或出错，停止即可
+            match result {
+                Ok(()) => {}
+                Err(err) => {
+                    // ERROR_MORE_DATA(234)：缓冲区装满但还有后续，数据仍然有效
+                    let code = err.code().0 as u32;
+                    if code != 0x8007_00EA {
+                        if debug {
+                            eprintln!(
+                                "[mft] DeviceIoControl 失败 code=0x{code:08X} returned={returned} rounds={rounds}"
+                            );
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if returned <= 8 {
+                if debug {
+                    eprintln!("[mft] 无记录返回（returned={returned}，rounds={rounds}）");
+                }
                 break;
+            }
+
+            if debug && rounds == 0 {
+                let head = &buffer[..96.min(returned as usize)];
+                let hex: Vec<String> = head.iter().map(|b| format!("{b:02X}")).collect();
+                eprintln!("[mft] 首块 {} 字节: {}", head.len(), hex.join(" "));
+                let base = 8usize; // 前 8 字节是 next FRN
+                if head.len() >= base + 64 {
+                    let u32_at = |o: usize| {
+                        u32::from_le_bytes([
+                            head[base + o],
+                            head[base + o + 1],
+                            head[base + o + 2],
+                            head[base + o + 3],
+                        ])
+                    };
+                    let u16_at = |o: usize| {
+                        u16::from_le_bytes([head[base + o], head[base + o + 1]])
+                    };
+                    eprintln!(
+                        "[mft] 记录@8: len={} major={} minor={} attrs@44={:#X} attrs@52={:#X}",
+                        u32_at(0),
+                        u16_at(4),
+                        u16_at(6),
+                        u32_at(44),
+                        u32_at(52)
+                    );
+                    eprintln!(
+                        "[mft] name_len@48={} name_off@50={} | name_len@56={} name_off@58={} | name_len@52={} name_off@54={}",
+                        u16_at(48),
+                        u16_at(50),
+                        u16_at(56),
+                        u16_at(58),
+                        u16_at(52),
+                        u16_at(54)
+                    );
+                }
             }
 
             let slice = &buffer[..returned as usize];
@@ -496,8 +597,15 @@ mod win {
                 break;
             }
             input.start_file_reference_number = next;
+            rounds += 1;
         }
 
+        if debug {
+            eprintln!(
+                "[mft] 枚举结束：{rounds} 轮，{} 条记录",
+                records.len()
+            );
+        }
         Ok(records)
     }
 
@@ -569,9 +677,10 @@ mod tests {
     use super::*;
 
     fn make_record(frn: u64, parent: u64, name: &str, dir: bool) -> Vec<u8> {
+        // 按实测的 Win10 22H2 布局：头部 60 字节，name_len@56 / name_off@58
         let utf16: Vec<u16> = name.encode_utf16().collect();
         let name_bytes = utf16.len() * 2;
-        let length = (52 + name_bytes + 7) / 8 * 8;
+        let length = (60 + name_bytes + 7) / 8 * 8;
         let mut buf = vec![0u8; length];
 
         buf[0..4].copy_from_slice(&(length as u32).to_le_bytes());
@@ -579,13 +688,43 @@ mod tests {
         buf[8..16].copy_from_slice(&frn.to_le_bytes());
         buf[16..24].copy_from_slice(&parent.to_le_bytes());
         let attrs: u32 = if dir { 0x10 } else { 0x80 };
-        buf[44..48].copy_from_slice(&attrs.to_le_bytes());
-        buf[48..50].copy_from_slice(&(name_bytes as u16).to_le_bytes());
-        buf[50..52].copy_from_slice(&52u16.to_le_bytes());
+        buf[52..56].copy_from_slice(&attrs.to_le_bytes());
+        buf[56..58].copy_from_slice(&(name_bytes as u16).to_le_bytes());
+        buf[58..60].copy_from_slice(&60u16.to_le_bytes());
         for (i, unit) in utf16.iter().enumerate() {
-            buf[52 + i * 2..54 + i * 2].copy_from_slice(&unit.to_le_bytes());
+            buf[60 + i * 2..62 + i * 2].copy_from_slice(&unit.to_le_bytes());
         }
         buf
+    }
+
+    #[test]
+    fn parser_supports_52_byte_header() {
+        // 某些版本头部是 52 字节：name_len@48 / name_off@50
+        let name = "legacy.txt";
+        let utf16: Vec<u16> = name.encode_utf16().collect();
+        let name_bytes = utf16.len() * 2;
+        let length = (52 + name_bytes + 7) / 8 * 8;
+        let mut record = vec![0u8; length];
+        record[0..4].copy_from_slice(&(length as u32).to_le_bytes());
+        record[4..6].copy_from_slice(&USN_RECORD_V2.to_le_bytes());
+        record[8..16].copy_from_slice(&77u64.to_le_bytes());
+        record[16..24].copy_from_slice(&5u64.to_le_bytes());
+        record[44..48].copy_from_slice(&0x80u32.to_le_bytes());
+        record[48..50].copy_from_slice(&(name_bytes as u16).to_le_bytes());
+        record[50..52].copy_from_slice(&52u16.to_le_bytes());
+        for (i, unit) in utf16.iter().enumerate() {
+            record[52 + i * 2..54 + i * 2].copy_from_slice(&unit.to_le_bytes());
+        }
+
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&78u64.to_le_bytes());
+        buffer.extend_from_slice(&record);
+
+        let mut out = Vec::new();
+        parse_usn_buffer(&buffer, &mut out).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].name, "legacy.txt");
+        assert!(!out[0].is_dir);
     }
 
     #[test]
