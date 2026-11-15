@@ -2,6 +2,12 @@
 
 高性能 Windows 启动器（uTools / ZTools 形态）：**搜应用 · 搜文件 · 截图贴图 · JSON 工具**。
 
+## 下载
+
+最新安装包：**[xTools_0.1.0_x64-setup.exe](https://github.com/smilefisher/xTools/releases/latest)**
+
+用户级安装，不需要管理员；安装包内含主程序与索引助手，约 1.9 MB。打 tag 会由 GitHub Actions 自动构建并发布（[Release 页面](https://github.com/smilefisher/xTools/releases)）。
+
 四个功能均已实现并在真机验证；仅「MFT 提权索引」一条路径仍待一次 UAC 实测（见文末检查清单）。
 
 ## 技术栈
