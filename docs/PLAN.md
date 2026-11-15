@@ -1,5 +1,8 @@
-# 高性能 Windows 启动器 · 方案设计（v0.2 定稿）
+# 高性能 Windows 启动器 · 方案设计（v0.3 实施记录）
 
+> 状态：**四个功能已实现并在真机验证**；仅「MFT 提权枚举」一条路径待一次 UAC 实测。
+> 本文档保留最初的方案设计，文末新增「实施记录」记录与计划的偏差。
+>
 > 目标：uTools / ZTools 形态的 Windows 常驻效率工具。**本版只做四件事**：搜应用、搜文件、截图（含贴图）、JSON 工具。reference：ZTools（Electron 41 + Vue3 + electron-vite + LMDB + uiohook-napi）、uTools。
 >
 > 环境已核实：Win10 22H2 (19045)、Ryzen 5 7500F、Node 24.19、Rust 1.98 msvc、VS2019 BuildTools + Win10 SDK 22621、WebView2 157、Everything 已在运行（`E:\Everything`，db 297MB）。
@@ -223,3 +226,42 @@ E:\ztools\
 ## 12. 下一步
 
 M0 可以立刻开工：`npm create tauri-app` → 接热键/托盘/预热窗口 → 打通 bench 打点，先拿到「热键→首帧」的真实数字，再往上叠功能。
+
+---
+
+## 13. 实施记录（与计划的偏差）
+
+### 13.1 里程碑
+
+| 阶段 | 计划 | 实际 |
+|---|---|---|
+| M0 骨架 | 热键/托盘/预热窗口/打点 | ✅ 首帧 p50 17.5ms |
+| M1 应用搜索 | 开始菜单 + App Paths + UWP + 拼音 + 图标 | ✅ 273 条；UWP 改走 `Get-StartApps`（见 13.2） |
+| M2 文件搜索 | MFT + USN 索引服务 | 目录索引/查询/落盘 ✅；MFT+USN+管道服务 ✅ 代码就绪，**提权路径待实测** |
+| M3 截图贴图 | 冻结帧选区 + 标注 + 贴图 | ✅ 选区/标注/剪贴板/贴图窗；未做「冻结帧」（现为半透明覆盖实时桌面） |
+| M4 JSON | 编辑器 + 树视图 + tape | ✅ 编辑器/格式化/排序/校验/JSONPath/树视图/**结构大纲**（tape 由大纲+按区间懒解析替代） |
+| M5 打磨 | 自启/日志/安装包 | ✅ 自启、自检报告、NSIS 安装包；崩溃日志未单独做（stdout/stderr 落盘） |
+
+### 13.2 实现中改掉的决策
+
+1. **UWP 枚举**：WinRT `PackageManager` 在锁屏/非交互会话下返回 `ACCESS_DENIED`（实测，即使先 `RoInitialize`）。改为 shell 的 `Get-StartApps`，并经 UTF-8 临时文件中转避免控制台代码页把中文变成乱码；结果按 24h 缓存。
+2. **UWP 图标**：`SHGetFileInfo` 不认 `shell:` 路径，改用 `IShellItemImageFactory`；关键前提是**先 `CoInitializeEx`**，否则解析静默失败。
+3. **索引服务形态**：没写 SCM 服务宿主，改用**计划任务**（`ONLOGON` + 最高权限）。理由：少一套服务生命周期代码，用户能在任务计划程序里自助管理。命令 `--install-index-service`（需一次 UAC）。
+4. **MFT 入口**：用 `FSCTL_ENUM_USN_DATA` 而非自己解析 `$MFT`；增量用 `FSCTL_READ_USN_JOURNAL`。解析头偏移曾写错 8 字节，已修并加「结果合理性校验 + 自动回退目录扫描」。
+5. **JSON 大文件**：没做完整 tape，改为**字节级结构大纲**（225ms 扫完 29.5MB）+ 按区间懒解析，收益接近而实现量小一个数量级。
+6. **截图合成**：标注在前端画预览、由 Rust 栅格化到像素上（避免 canvas 导出丢 alpha / DPR 误差）。
+
+### 13.3 计划里没写、但实际必须处理的环境问题
+
+- **沙箱/cargo**：`schannel` 拿不到凭证 → 依赖下载在受限环境失败；`cl.exe` 中间文件写 `%TEMP%` 被拒 → 需显式指定 TMP。
+- **WebView2 与工作区**：从工作区目录启动 WebView2 会 `ERROR_BUSY (0x800700AA)`，复制到工作区外运行正常（与 DSH 文件沙箱相关）。
+- **锁屏语义**：锁屏时剪贴板读写一律 `ACCESS_DENIED`（`LogonUI.exe` 在跑即为锁定态），不是代码缺陷。
+- **安全软件**：火绒 HIPS 会挂起 NSIS 安装器等待人工放行。
+- **PowerShell 编码**：`Get-Content/Set-Content` 重写含中文的源码会按 ANSI 解码导致乱码；核对/写入中文文件一律走编辑器或 `[IO.File]::ReadAllText(..., UTF8)`。
+
+### 13.4 剩余工作
+
+1. 管理员运行 `--probe-mft`，把实测耗时写进 README
+2. 安装包人工跑一次（火绒放行）
+3. 可选：`--install-service` 让索引服务随登录常驻（走 MFT 快路径）
+4. 后续可做：截图冻结帧、截图文字标注（需字体渲染）、文件内容全文检索

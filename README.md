@@ -2,122 +2,116 @@
 
 高性能 Windows 启动器（uTools / ZTools 形态）：**搜应用 · 搜文件 · 截图贴图 · JSON 工具**。
 
-当前进度：**M0 骨架**（单实例 / 托盘 / 全局热键 / 预热面板 / 首帧打点）。
+四个功能均已实现并在真机验证；仅「MFT 提权索引」一条路径仍待一次 UAC 实测（见文末检查清单）。
 
 ## 技术栈
 
-- 壳：Tauri 2（Rust + WebView2）
-- 前端：SolidJS + TypeScript + Vite
-- 文件索引：自研 MFT + USN 服务（M2 落地，见 [docs/PLAN.md](docs/PLAN.md)）
+- 壳：Tauri 2（Rust + WebView2），release 单文件约 5.8 MB
+- 前端：SolidJS + TypeScript + Vite + CodeMirror 6
+- 索引：自研紧凑内存索引（父节点引用 + 字节池），落盘快照，命名管道服务化
 
-## 开发
+## 快捷键
+
+| 操作 | 键 |
+|---|---|
+| 唤起面板 | `Alt+Space`（被占用时自动回退 `Ctrl+Space` → `Alt+Shift+Space` → `Ctrl+Alt+Space`） |
+| 截图 | `Alt+Shift+A` |
+| 面板内 | `↑↓` 选择 · `PgUp/PgDn/Home/End` 翻页 · `↵` 打开 · `Ctrl+↵` 定位文件 / 以管理员运行 · `Ctrl+C` 复制路径 · 右键动作菜单 · `Esc` 收起 |
+| 截图内 | 拖选 → 工具（矩形/箭头/画笔/马赛克）→ `↵` 复制 · `Ctrl+↵` 贴图 · `Ctrl+Z` 撤销 · `Esc` 取消 |
+| 贴图窗 | 拖动 · 滚轮缩放 · `Alt+滚轮` 透明度 · 双击关闭 · 右键菜单 |
+
+## 开发与构建
 
 ```bash
 npm install
-npm run app        # tauri dev：热重载开发
-npm run dist       # 打 NSIS 安装包（release）
+npm run app        # tauri dev（热重载）
+npm run dist       # NSIS 安装包：target/release/bundle/nsis/xTools_0.1.0_x64-setup.exe（约 1.9MB）
 npm run typecheck  # 前端类型检查
+cargo test --workspace   # Rust 单测（19 个）
 ```
 
-首次 `npm run app` 会编译 Rust 依赖，几分钟；之后增量编译很快。
+安装包为**用户级安装**（`currentUser`，不需要管理员），默认装到 `%LOCALAPPDATA%\Programs\xTools`，界面简中，含 `xTools.exe` 与 `xtools-indexd.exe`。
 
-## 安装包
+## 自检与诊断
 
 ```bash
-npm run dist       # 产物：target/release/bundle/nsis/xTools_0.1.0_x64-setup.exe（约 1.9MB）
+xTools.exe --self-check          # 环境/索引/JSON/截图/剪贴板状态，写入 logs\self-check.txt
+xTools.exe --probe-apps          # 应用索引与查询样例
+xTools.exe --probe-files         # 文件索引（优先读落盘缓存）与查询样例
+xTools.exe --probe-mft           # MFT 枚举（需管理员）
+xTools.exe --probe-capture       # 抓屏 → 裁剪 → PNG → 剪贴板
+xTools.exe --probe-uwp           # UWP 应用枚举与图标提取
+xTools.exe --probe-json          # JSON 窗口 + 树视图
+xTools.exe --probe-outline       # 30MB 文档的结构扫描
+xTools.exe --probe-pipe          # 索引服务连通性
+xTools.exe --install-index-service / --uninstall-index-service   # 计划任务（需管理员）
 ```
-
-安装包内含两个文件：`xTools.exe`（主程序）与 `xtools-indexd.exe`（索引助手，可选启用）。
-
-- 用户级安装（`currentUser`），**不需要管理员**，默认装到 `%LOCALAPPDATA%\Programs\xTools`
-- 安装界面简体中文（内置简中 + 英文），卸载走「设置 → 应用」或安装目录的 `uninstall.exe`
-- 依赖 WebView2 运行时：Win11 自带；Win10 若缺，安装器会引导安装
-
-## 索引服务（可选）
-
-`xtools-indexd.exe` 是独立的索引助手：建索引 + 通过命名管道 `xtools-index-v1` 提供**只读查询**（不接受任何执行/打开路径的指令）。
-
-```bash
-xtools-indexd.exe --roots="D:\Projects"     # 不给参数则索引 %USERPROFILE%
-```
-
-- 主程序启动时先探活：服务在线就**不建本地索引**，直接把查询转发过去；不在线则回退进程内索引
-- 以**管理员**身份运行时走 MFT 枚举（百万文件秒级），否则退回目录扫描
-- 协议：一行一个 JSON，`{"op":"ping"}` / `{"op":"search","query":"cargo","limit":20}`
-
-## 自检
-
-```bash
-xTools.exe --self-check     # 输出环境与各模块状态，并写入 %LOCALAPPDATA%\xtools\logs\self-check.txt
-```
-
-覆盖：管理员权限、索引服务/计划任务、开机自启、应用索引与查询延迟、文件索引（服务或本地缓存）、JSON 三件套、抓屏与剪贴板。
-
-## 性能测量
-
-```bash
-# 自驱 20 轮「唤起 → 首帧」，输出 p50/p95，并写 bench-latency.json
-npm run tauri -- dev -- --bench=20
-```
-
-面板右下角会实时显示最近一次「热键 → 首帧」耗时，方便肉眼回归。
-
-**M0 实测（Win10 22H2 / Ryzen 5 7500F / release 构建）**
-
-| 指标 | 结果 |
-|---|---|
-| 热键 → 首帧 p50 | **17.5 ms** |
-| 热键 → 首帧 p95 | **18.1 ms** |
-| 首帧 min / max | 16.5 ms / 30.2 ms |
-| 主进程体积 | 4.5 MB（exe） |
-| 主进程内存 | 30.5 MB |
-| 含 WebView2 子进程总内存 | 140.7 MB |
 
 ## 已实现
 
 | 能力 | 说明 |
 |---|---|
-| 应用搜索 | 开始菜单 `.lnk` + `App Paths` 注册表 + **UWP/Store 应用**（`Get-StartApps`，AUMID 启动，图标走 shell 命名空间），中文/拼音首字母/子序列匹配，图标按需提取并缓存，使用频次加权 |
-| 文件搜索 | 目录遍历建索引（默认 `%USERPROFILE%`），内存紧凑布局 + rayon 并行扫描，落盘缓存 6 小时，`ext:` 过滤、空格 AND |
-| 截图 / 贴图 | `Alt+Shift+A` 唤起全屏选区 → 回车复制到剪贴板、`Ctrl+回车` 贴到屏幕；截图自动存一份到 `%LOCALAPPDATA%\xtools\shots` |
-| JSON 工具 | 独立窗口（CodeMirror 6）：格式化（保序/2·4 空格/Tab）、压缩、键排序、校验（报行列）、JSONPath 查询；面板里输入 `{` 可直接带内容打开 |
-| 设置窗口 | 托盘右键 →「设置」：热键、失焦收起、索引目录增删、开机自启；保存后热键**立即重新注册**，索引目录改动重启生效 |
-| 面板操作 | `↑↓` 选择、`PgUp/PgDn/Home/End` 翻页跳转、`Ctrl+Enter` 定位文件、`Ctrl+C` 复制路径/目标、选中项自动滚入视野 |
-| 开机自启 | 写 `HKCU\...\Run`（无需管理员），设置里一键开关 |
-| 单实例 | 重复启动不会开第二个进程，直接把已有面板叫到前台 |
-| 托盘常驻 | 左键唤起，右键菜单可重新注册热键 / 退出；关窗只隐藏不退出 |
-| 全局热键 | 默认 `Alt+Space`，失败自动回退 `Ctrl+Space` → `Alt+Shift+Space` → `Ctrl+Alt+Space` |
-| 预热窗口 | 启动即创建隐藏窗口，唤起只做「定位 + 显示 + 抢焦点」，不重建窗口 |
-| 跟随屏幕 | 在鼠标所在显示器居中偏上弹出 |
-| 抢焦点 | AttachThreadInput 绕过前台锁，热键唤起后可直接输入 |
-| 首帧打点 | Rust 记录唤起时刻，前端首帧回调，实时显示 + bench 模式统计 |
-| 设置 | `%APPDATA%\xtools\settings.json`（热键、失焦收起、主题） |
+| 应用搜索 | 开始菜单 `.lnk` + `App Paths` 注册表 + UWP/Store（`Get-StartApps`，AUMID 启动，图标走 shell 命名空间）；中文/拼音首字母/子序列匹配；图标按需提取并缓存；使用频次加权 |
+| 文件搜索 | 目录遍历建索引 + MFT 快速枚举 + USN 日志增量；内存紧凑布局 + rayon 并行扫描；落盘快照 6 小时；`ext:` 过滤、空格 AND；结果含大小与修改日期 |
+| 索引服务 | `xtools-indexd.exe` 独立进程，命名管道只读查询；主程序探活成功即不建本地索引 |
+| 截图 / 贴图 | 全屏选区、矩形/箭头/画笔/马赛克标注、剪贴板（CF_DIB）、贴图窗（缩放/透明度/右键菜单） |
+| JSON 工具 | CodeMirror 6 编辑器、保序格式化、压缩、键排序、流式校验、JSONPath 查询、树视图、30MB 级文档的结构大纲（按区间懒解析） |
+| 面板 | 命令前缀（`a ` 应用 / `f ` 文件 / `j ` 或 `{` JSON）、右键菜单、选中跟随滚动 |
+| 设置 | 托盘 →「设置」：热键、失焦收起、索引目录、开机自启；保存后热键立即重注册 |
+| 常驻 | 单实例、托盘、预热窗口（唤起只做显示+定位+抢焦点）、跟随鼠标屏、开机自启（HKCU Run） |
+
+## 实测数据（Win10 22H2 / Ryzen 5 7500F / release）
+
+| 指标 | 结果 |
+|---|---|
+| 热键 → 首帧 | p50 **17.5 ms**，p95 **18.1 ms**（空列表）；带 24 行结果约 p50 31 ms |
+| 应用索引 | 273 条 / 24~31 ms 建成 / 查询 0.04~0.06 ms |
+| 文件索引规模 | 2,408,604 条（`%USERPROFILE%`） |
+| 首次目录扫描 | 35.8 s（MFT 路径未实测，预期 1~3 s） |
+| 落盘 / 加载 | 120 MB / 秒级；常驻 124.3 MB |
+| 文件查询 | `cargo` 9.3 ms · `.rs` 6.8 ms · `ext:png` 4.3 ms（240 万条） |
+| 抓屏 / 裁剪 / PNG | 800×600 抓取 10.3 ms · 裁剪 0.1 ms · 落盘 2.4 ms |
+| 一次截图提交 | 187~231 ms（含 80 ms 等待覆盖窗消失） |
+| JSON 大纲 | 29.5 MB 文档结构扫描 **225 ms**，展开节点 1.0 s |
+| 主进程内存 | 31 MB（服务模式）/ 159 MB（自建 124 MB 索引） |
+
+## 架构要点
+
+- **预热窗口**：启动即隐藏创建，唤起只做 `SetWindowPos` + `ShowWindow` + `AttachThreadInput` 抢焦点，不重建 WebView
+- **索引内存布局**：不存完整路径，存「父节点下标 + 名字在字节池的偏移」，展示时回溯拼装
+- **查询**：`memchr2` 跳字节 + rayon 并行 + 有界 top-k 堆（避免命中几十万条时的全排序）
+- **索引服务**：命名管道一行一 JSON，只接受 `ping`/`search`，不接受执行类指令
+- **截图合成**：前端只画预览，最终由 Rust 把矢量操作栅格化到抓取的像素上，避免 DPR/透明通道误差
 
 ## 目录
 
 ```
-src/            前端（SolidJS）
-src-tauri/      Tauri 主程序（Rust）
-docs/PLAN.md    方案设计与里程碑
+src/                前端（SolidJS）：面板、截图层、贴图窗、JSON 工具、设置
+src-tauri/          主程序（Rust）：窗口/热键/托盘/截图/JSON/索引调度
+crates/indexer/     索引与查询引擎（MFT、USN、落盘、并行查询）
+crates/pipe/        命名管道传输
+crates/indexd/      索引助手进程
+docs/PLAN.md        方案设计与里程碑
+scripts/            Server酱 推送、安装脚本、打包辅助
 ```
 
-## 路线图
+## 验证状态
 
-- **M0** 骨架 ✅
-- **M1** 应用搜索 ✅（开始菜单 / App Paths / 拼音 / 图标 / MRU；UWP 待补）
-- **M2** 文件搜索：目录索引 + 落盘缓存 + 查询引擎 ✅；MFT 枚举 ✅（待提权验证）；USN 日志增量 ✅（提权时启用）；提权索引服务 🚧
-- **M3** 截图 + 贴图：冻结帧选区、标注、剪贴板、置顶贴图 ✅（选区/复制/贴图已通，标注待做）
-- **M4** JSON：编辑器、树视图、格式化 / JSONPath / 大文件懒解析 ✅（编辑器/格式化/压缩/排序/校验/JSONPath；树视图与 tape 待做）
-- **M5** 打磨：开机自启、崩溃日志、安装包
+| 项目 | 验证方式 | 状态 |
+|---|---|---|
+| 应用搜索 / UWP / 图标 | `--probe-apps`、`--probe-uwp` | ✅ 真机通过 |
+| 文件索引 / 查询 / 落盘 | `--probe-files`、`--probe-pipe` | ✅ 真机通过 |
+| 索引服务（管道） | PowerShell 客户端 + `--probe-pipe` | ✅ 真机通过 |
+| 截图 / 标注 / 剪贴板 | `--probe-shot` + 逐像素校验 + .NET 读剪贴板 | ✅ 真机通过（锁屏时会被系统拒绝，属预期） |
+| JSON 全部能力 | 19 个单测 + `--probe-json` / `--probe-outline` | ✅ 真机通过 |
+| 设置 / 开机自启 | `--probe-autostart` + 注册表核对 | ✅ 真机通过 |
+| 安装包 | 7-Zip 解包核对文件清单 | ✅ 构建通过；**安装向导未跑**（火绒 HIPS 会拦一次，需人工放行） |
+| **MFT + USN 提权路径** | 需管理员运行 `--probe-mft` | ⏳ **待一次 UAC** |
 
-### 文件搜索实测（release）
+## 待办
 
-| 指标 | 结果 |
-|---|---|
-| 索引规模 | 2,408,604 条（`%USERPROFILE%`） |
-| 首次扫描建索引 | 35.8 s |
-| 落盘大小 / 加载耗时 | 120 MB / 秒级 |
-| 常驻内存 | 124.3 MB |
-| 查询延迟（`cargo` / `.rs` / `ext:png`） | 9.3 / 6.8 / 4.3 ms |
+1. 以管理员运行 `scripts/probe-mft.cmd`（或 `xTools.exe --probe-mft`），确认 MFT 枚举的实际耗时
+2. 双击安装包完成一次安装/卸载（火绒会弹窗，放行即可）
+3. 若需要开机即用 MFT：`scripts/install-service.cmd` 装计划任务（一次 UAC），之后登录自动拉起索引助手
 
-环境变量：`XTOOLS_INDEX_ROOTS`（分号分隔的索引根）、`XTOOLS_DEBUG=1`（详细日志）。
+环境变量：`XTOOLS_INDEX_ROOTS`（分号分隔索引根）、`XTOOLS_DEBUG=1`（详细日志）。
