@@ -36,6 +36,34 @@ impl FileState {
         self.ready.load(Ordering::Relaxed)
     }
 
+    /// 索引来源：`service`（外部助手）/ `cache`（落盘快照）/ `building`。
+    pub fn backend(&self) -> &'static str {
+        if self.service_available() {
+            return "service";
+        }
+        if self.ready.load(Ordering::Relaxed) {
+            return "cache";
+        }
+        "building"
+    }
+
+    /// 删掉快照并重建索引（设置里的「重建索引」）。
+    pub fn reindex(self: &Arc<Self>) {
+        self.ready.store(false, Ordering::Relaxed);
+        self.service_entries.store(0, Ordering::Relaxed);
+        if let Ok(mut guard) = self.index.write() {
+            *guard = None;
+        }
+        if let Some(path) = index_path() {
+            let _ = std::fs::remove_file(&path);
+        }
+        let me = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("xtools-reindex".into())
+            .spawn(move || me.load_or_build())
+            .ok();
+    }
+
     fn service_available(&self) -> bool {
         self.service_entries.load(Ordering::Relaxed) > 0
     }

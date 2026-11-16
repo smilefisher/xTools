@@ -5,6 +5,7 @@ import { basicSetup } from "codemirror";
 import { EditorView } from "@codemirror/view";
 import { json } from "@codemirror/lang-json";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 type JsonResult = {
   ok: boolean;
@@ -69,6 +70,7 @@ export default function JsonTool() {
   const [tree, setTree] = createSignal<JsonTree | null>(null);
   const [collapsed, setCollapsed] = createSignal<Set<number>>(new Set());
   const [outlineData, setOutlineData] = createSignal<JsonOutline | null>(null);
+  const [currentPath, setCurrentPath] = createSignal<string | null>(null);
   let host: HTMLDivElement | undefined;
   let view: EditorView | undefined;
 
@@ -228,6 +230,45 @@ export default function JsonTool() {
     }
   };
 
+  const openFile = async () => {
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json", "jsonc", "txt"] }],
+      });
+      if (!picked || Array.isArray(picked)) return;
+      const file = await invoke<{ path: string; size: number; text: string }>(
+        "json_read_file",
+        { path: picked },
+      );
+      replace(file.text);
+      setCurrentPath(file.path);
+      setStatus(`已打开 ${file.path}（${(file.size / 1024).toFixed(1)} KB）`);
+      setError("");
+    } catch (err) {
+      setError(`打开失败：${String(err)}`);
+    }
+  };
+
+  const saveFile = async () => {
+    try {
+      const target = await saveDialog({
+        defaultPath: currentPath() ?? "data.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!target) return;
+      const bytes = await invoke<number>("json_write_file", {
+        path: target,
+        content: text(),
+      });
+      setCurrentPath(target);
+      setStatus(`已保存 ${target}（${(bytes / 1024).toFixed(1)} KB）`);
+      setError("");
+    } catch (err) {
+      setError(`保存失败：${String(err)}`);
+    }
+  };
+
   onMount(() => {
     void init();
   });
@@ -335,6 +376,8 @@ export default function JsonTool() {
   return (
     <div class="json-root">
       <div class="json-toolbar">
+        <button onClick={() => void openFile()}>打开</button>
+        <button onClick={() => void saveFile()}>保存</button>
         <button onClick={() => void run("format")}>格式化</button>
         <button onClick={() => void run("minify")}>压缩</button>
         <button onClick={() => void sortKeys()}>键排序</button>

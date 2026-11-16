@@ -9,7 +9,7 @@ use std::collections::BinaryHeap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::Index;
+use crate::{Entry, Index};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
@@ -27,6 +27,9 @@ pub struct Hit {
 enum Term {
     Text(Vec<u8>),
     Ext(Vec<u8>),
+    Path(Vec<u8>),
+    SizeMin(u64),
+    SizeMax(u64),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -47,6 +50,20 @@ impl Query {
                 let ext = lower[4..].to_vec();
                 if !ext.is_empty() {
                     terms.push(Term::Ext(ext));
+                }
+            } else if lower.starts_with(b"path:") {
+                let part = lower[5..].to_vec();
+                if !part.is_empty() {
+                    terms.push(Term::Path(part));
+                }
+            } else if lower.starts_with(b"size:") {
+                if let Some((min, max)) = parse_size(&lower[5..]) {
+                    if let Some(min) = min {
+                        terms.push(Term::SizeMin(min));
+                    }
+                    if let Some(max) = max {
+                        terms.push(Term::SizeMax(max));
+                    }
                 }
             } else {
                 terms.push(Term::Text(lower));
@@ -108,7 +125,7 @@ pub fn search(index: &Index, query: &Query, limit: usize) -> Vec<Hit> {
                 }
                 let name = &names
                     [entry.name_off as usize..entry.name_off as usize + entry.name_len as usize];
-                if let Some(score) = score_entry(name, terms) {
+                if let Some(score) = score_entry(name, terms, index, i as u32, entry) {
                     heap.push(Reverse(Cand {
                         score,
                         idx: i as u32,
@@ -159,7 +176,37 @@ pub fn search(index: &Index, query: &Query, limit: usize) -> Vec<Hit> {
         .collect()
 }
 
-fn score_entry(name: &[u8], terms: &[Term]) -> Option<u32> {
+/// `>10m` / `<1k` / `10m-20m` / `10m`（视为 ≥）
+fn parse_size(raw: &[u8]) -> Option<(Option<u64>, Option<u64>)> {
+    let text = std::str::from_utf8(raw).ok()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    let parse_one = |value: &str| -> Option<u64> {
+        let value = value.trim();
+        let (number, multiplier) = match value.chars().last()? {
+            'k' | 'K' => (&value[..value.len() - 1], 1024u64),
+            'm' | 'M' => (&value[..value.len() - 1], 1024 * 1024),
+            'g' | 'G' => (&value[..value.len() - 1], 1024 * 1024 * 1024),
+            _ => (value, 1),
+        };
+        number.parse::<u64>().ok().map(|n| n * multiplier)
+    };
+
+    if let Some(rest) = text.strip_prefix('>').or_else(|| text.strip_prefix(">=")) {
+        return parse_one(rest).map(|min| (Some(min), None));
+    }
+    if let Some(rest) = text.strip_prefix('<').or_else(|| text.strip_prefix("<=")) {
+        return parse_one(rest).map(|max| (None, Some(max)));
+    }
+    if let Some((low, high)) = text.split_once('-') {
+        return Some((parse_one(low), parse_one(high)));
+    }
+    parse_one(text).map(|min| (Some(min), None))
+}
+
+fn score_entry(name: &[u8], terms: &[Term], index: &Index, idx: u32, entry: &Entry) -> Option<u32> {
     let mut score = 0u32;
     for term in terms {
         match term {
@@ -170,9 +217,42 @@ fn score_entry(name: &[u8], terms: &[Term]) -> Option<u32> {
                 }
                 score += 100;
             }
+            Term::Path(want) => {
+                if !path_matches(index, idx, want) {
+                    return None;
+                }
+                score += 50;
+            }
+            Term::SizeMin(min) => {
+                if entry.is_dir || entry.size < *min {
+                    return None;
+                }
+            }
+            Term::SizeMax(max) => {
+                if entry.is_dir || entry.size > *max {
+                    return None;
+                }
+            }
         }
     }
     Some(score)
+}
+
+/// 沿父链找目录名是否包含关键词（不拼完整路径，省一次分配）。
+fn path_matches(index: &Index, idx: u32, needle: &[u8]) -> bool {
+    let mut cursor = index.entries[idx as usize].parent;
+    let mut depth = 0;
+    while cursor != crate::NO_PARENT && depth < 64 {
+        let entry = &index.entries[cursor as usize];
+        let name = &index.names
+            [entry.name_off as usize..entry.name_off as usize + entry.name_len as usize];
+        if find_ci(name, needle).is_some() {
+            return true;
+        }
+        cursor = entry.parent;
+        depth += 1;
+    }
+    false
 }
 
 /// 单条名字打分；不匹配返回 None。
@@ -240,6 +320,42 @@ fn find_ci(hay: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_and_path_filters() {
+        let root = std::env::temp_dir().join("xtools-query-filter-test");
+        let sub = root.join("src");
+        let _ = std::fs::create_dir_all(&sub);
+        let _ = std::fs::write(sub.join("big.bin"), vec![0u8; 4096]);
+        let _ = std::fs::write(root.join("small.txt"), b"hi");
+
+        let (index, _) = crate::build_walk(&[root.clone()]);
+
+        let by_size = Query::parse("size:>1k");
+        let hits = search(&index, &by_size, 10);
+        assert!(hits.iter().any(|hit| hit.name == "big.bin"), "size 过滤没命中");
+        assert!(!hits.iter().any(|hit| hit.name == "small.txt"));
+
+        let by_path = Query::parse("path:src");
+        let hits = search(&index, &by_path, 10);
+        assert!(!hits.is_empty(), "path 过滤没命中");
+
+        let combined = Query::parse("ext:bin size:>1k path:src");
+        let hits = search(&index, &combined, 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "big.bin");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parse_size_variants() {
+        assert_eq!(parse_size(b">10m"), Some((Some(10 * 1024 * 1024), None)));
+        assert_eq!(parse_size(b"<1k"), Some((None, Some(1024))));
+        assert_eq!(parse_size(b"2k-3k"), Some((Some(2048), Some(3072))));
+        assert_eq!(parse_size(b"500"), Some((Some(500), None)));
+        assert_eq!(parse_size(b"abc"), None);
+    }
 
     #[test]
     fn parse_terms() {

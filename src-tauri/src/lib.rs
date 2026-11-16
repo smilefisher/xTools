@@ -648,6 +648,7 @@ pub fn run() {
             win::show_palette(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(cmd::AppState::new())
         .invoke_handler(tauri::generate_handler![
             cmd::hide_palette,
@@ -666,6 +667,10 @@ pub fn run() {
             cmd::app_icon,
             cmd::file_search,
             cmd::file_status,
+            cmd::file_reindex,
+            cmd::index_service_status,
+            cmd::index_service_install,
+            cmd::index_service_uninstall,
             cmd::file_open,
             cmd::file_reveal,
             cmd::copy_text,
@@ -680,6 +685,8 @@ pub fn run() {
             cmd::json_validate,
             cmd::json_query,
             cmd::json_tree,
+            cmd::json_read_file,
+            cmd::json_write_file,
             cmd::json_outline,
             cmd::json_slice,
             cmd::json_open,

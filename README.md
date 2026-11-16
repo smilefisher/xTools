@@ -4,13 +4,13 @@
 
 ## 下载
 
-最新安装包：**[xTools_0.1.1_x64-setup.exe](https://github.com/smilefisher/xTools/releases/latest)**
+最新安装包：**[xTools_0.1.2_x64-setup.exe](https://github.com/smilefisher/xTools/releases/latest)**
 
 用户级安装，不需要管理员；安装包内含主程序与索引助手，约 1.9 MB。打 tag 会由 GitHub Actions 自动构建并发布（[Release 页面](https://github.com/smilefisher/xTools/releases)）。
 
 ### 版本记录
 
-- **0.1.1**：修复从面板打开 JSON 工具 / 设置窗口 / 截图覆盖层时的**主线程死锁**（表现为窗口打不开、整个界面假死）；窗口创建统一改为后台线程
+- **0.1.2**：JSON 工具支持打开/保存文件；设置面板加入索引状态、重建索引、安装/卸载索引服务；文件搜索支持 `size:` 与 `path:` 过滤`n- **0.1.1**：修复从面板打开 JSON 工具 / 设置窗口 / 截图覆盖层时的**主线程死锁**（表现为窗口打不开、整个界面假死）；窗口创建统一改为后台线程
 - **0.1.0**：首个可用版本（搜应用含 UWP、文件搜索含 MFT、截图贴图、JSON 工具）
 
 四个功能均已实现并在真机验证；仅「MFT 提权索引」一条路径仍待一次 UAC 实测（见文末检查清单）。
@@ -36,7 +36,7 @@
 ```bash
 npm install
 npm run app        # tauri dev（热重载）
-npm run dist       # NSIS 安装包：target/release/bundle/nsis/xTools_0.1.1_x64-setup.exe（约 1.9MB）
+npm run dist       # NSIS 安装包：target/release/bundle/nsis/xTools_0.1.2_x64-setup.exe（约 1.9MB）
 npm run typecheck  # 前端类型检查
 cargo test --workspace   # Rust 单测（19 个）
 ```
@@ -63,12 +63,12 @@ xTools.exe --install-index-service / --uninstall-index-service   # 计划任务�
 | 能力 | 说明 |
 |---|---|
 | 应用搜索 | 开始菜单 `.lnk` + `App Paths` 注册表 + UWP/Store（`Get-StartApps`，AUMID 启动，图标走 shell 命名空间）；中文/拼音首字母/子序列匹配；图标按需提取并缓存；使用频次加权 |
-| 文件搜索 | 目录遍历建索引 + MFT 快速枚举 + USN 日志增量；内存紧凑布局 + rayon 并行扫描；落盘快照 6 小时；`ext:` 过滤、空格 AND；结果含大小与修改日期 |
+| 文件搜索 | 目录遍历建索引 + MFT 快速枚举 + USN 日志增量；内存紧凑布局 + rayon 并行扫描；落盘快照 6 小时；`ext:` / `size:>10m` / `path:src` 过滤、空格 AND；结果含大小与修改日期 |
 | 索引服务 | `xtools-indexd.exe` 独立进程，命名管道只读查询；主程序探活成功即不建本地索引 |
 | 截图 / 贴图 | 全屏选区、矩形/箭头/画笔/马赛克标注、剪贴板（CF_DIB）、贴图窗（缩放/透明度/右键菜单） |
-| JSON 工具 | CodeMirror 6 编辑器、保序格式化、压缩、键排序、流式校验、JSONPath 查询、树视图、30MB 级文档的结构大纲（按区间懒解析） |
+| JSON 工具 | CodeMirror 6 编辑器、保序格式化、压缩、键排序、流式校验、JSONPath 查询、树视图、30MB 级文档的结构大纲（按区间懒解析）、**打开/保存 .json 文件** |
 | 面板 | 命令前缀（`a ` 应用 / `f ` 文件 / `j ` 或 `{` JSON）、右键菜单、选中跟随滚动 |
-| 设置 | 托盘 →「设置」：热键、失焦收起、索引目录、开机自启；保存后热键立即重注册 |
+| 设置 | 托盘 →「设置」：热键、失焦收起、索引目录、开机自启、**索引状态/重建索引/安装索引服务**；保存后热键立即重注册 |
 | 常驻 | 单实例、托盘、预热窗口（唤起只做显示+定位+抢焦点）、跟随鼠标屏、开机自启（HKCU Run） |
 
 ## 实测数据（Win10 22H2 / Ryzen 5 7500F / release）

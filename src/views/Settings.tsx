@@ -10,6 +10,13 @@ type Settings = {
 
 type SaveResult = { settings: Settings; problems: string[] };
 type AutostartState = { enabled: boolean; command: string | null; exe: string };
+type FileStatus = { ready: boolean; entries: number; backend: string };
+type ServiceStatus = {
+  installed: boolean;
+  run_level: string | null;
+  running: boolean;
+  elevated: boolean;
+};
 
 export default function SettingsView() {
   const [draft, setDraft] = createSignal<Settings | null>(null);
@@ -18,6 +25,49 @@ export default function SettingsView() {
   const [status, setStatus] = createSignal("");
   const [problems, setProblems] = createSignal<string[]>([]);
   const [rootInput, setRootInput] = createSignal("");
+  const [fileStatus, setFileStatus] = createSignal<FileStatus | null>(null);
+  const [serviceStatus, setServiceStatus] = createSignal<ServiceStatus | null>(null);
+
+  const backendLabel = (backend: string) =>
+    backend === "service"
+      ? "索引服务（xtools-indexd）"
+      : backend === "cache"
+        ? "本地索引（扫描 + 落盘快照）"
+        : "构建中…";
+
+  const refreshIndexState = async () => {
+    try {
+      setFileStatus(await invoke<FileStatus>("file_status"));
+      setServiceStatus(await invoke<ServiceStatus>("index_service_status"));
+    } catch {
+      /* 忽略 */
+    }
+  };
+
+  const reindex = async () => {
+    await invoke("file_reindex").catch(() => {});
+    setStatus("已开始重建索引（后台进行，约 30 秒）");
+    window.setTimeout(() => void refreshIndexState(), 3000);
+  };
+
+  const installService = async () => {
+    try {
+      const message = await invoke<string>("index_service_install");
+      setStatus(message);
+      void refreshIndexState();
+    } catch (err) {
+      setStatus(String(err));
+    }
+  };
+
+  const uninstallService = async () => {
+    try {
+      setStatus(await invoke<string>("index_service_uninstall"));
+      void refreshIndexState();
+    } catch (err) {
+      setStatus(String(err));
+    }
+  };
 
   onMount(async () => {
     void invoke("log_frontend", { message: "settings view mounted" }).catch(() => {});
@@ -26,6 +76,7 @@ export default function SettingsView() {
       const auto = await invoke<AutostartState>("autostart_get");
       setAutostartEnabled(auto.enabled);
       setExePath(auto.exe);
+      await refreshIndexState();
     } catch (err) {
       setStatus(`读取设置失败：${String(err)}`);
     }
@@ -102,8 +153,29 @@ export default function SettingsView() {
 
             <section class="settings-group">
               <h3>文件索引</h3>
+              <Show when={fileStatus()}>
+                {(status) => (
+                  <p class="settings-tip">
+                    当前：{status().entries.toLocaleString()} 条 · {backendLabel(status().backend)}
+                  </p>
+                )}
+              </Show>
+              <Show when={serviceStatus()}>
+                {(svc) => (
+                  <p class="settings-tip">
+                    索引服务：{svc().installed ? `已安装（${svc().run_level ?? "未知"}）` : "未安装"}
+                   　运行中：{svc().running ? "是" : "否"}
+                  </p>
+                )}
+              </Show>
+              <div class="settings-add">
+                <button onClick={() => void reindex()}>重建索引</button>
+                <button onClick={() => void installService()}>安装索引服务</button>
+                <button onClick={() => void uninstallService()}>卸载服务</button>
+                <button onClick={() => void refreshIndexState()}>刷新状态</button>
+              </div>
               <p class="settings-tip">
-                留空索引 `%USERPROFILE%`。改动保存后需重启程序生效。
+                索引根目录留空则索引 `%USERPROFILE%`；改动保存后需重启程序生效。
               </p>
               <For each={settings().index_roots}>
                 {(root, index) => (

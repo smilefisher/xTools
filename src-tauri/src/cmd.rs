@@ -188,7 +188,37 @@ pub fn file_status(state: State<'_, AppState>) -> serde_json::Value {
     serde_json::json!({
         "ready": state.files.is_ready(),
         "entries": state.files.entry_count(),
+        "backend": state.files.backend(),
     })
+}
+
+#[tauri::command]
+pub fn file_reindex(state: State<'_, AppState>) -> serde_json::Value {
+    state.files.reindex();
+    serde_json::json!({ "started": true })
+}
+
+#[tauri::command]
+pub fn index_service_status() -> serde_json::Value {
+    serde_json::json!({
+        "installed": crate::service_install::task_exists(),
+        "run_level": crate::service_install::current_run_level(),
+        "running": crate::search::service::ping().is_some(),
+        "elevated": crate::search::app_index::is_elevated_process(),
+    })
+}
+
+#[tauri::command]
+pub fn index_service_install() -> Result<String, String> {
+    if !crate::search::app_index::is_elevated_process() {
+        return Err("安装索引服务需要管理员权限：请右键 scripts\\install-service.cmd → 以管理员身份运行".into());
+    }
+    crate::service_install::install(true)
+}
+
+#[tauri::command]
+pub fn index_service_uninstall() -> Result<String, String> {
+    crate::service_install::uninstall()
 }
 
 #[tauri::command]
@@ -298,6 +328,29 @@ pub fn json_query(text: String, path: String) -> crate::json::JsonResult {
 #[tauri::command]
 pub fn json_tree(text: String, limit: Option<usize>) -> crate::json::JsonTree {
     crate::json::tree(&text, limit.unwrap_or(3000))
+}
+
+#[tauri::command]
+pub fn json_read_file(path: String) -> Result<serde_json::Value, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| format!("读取失败：{e}"))?;
+    if meta.len() > 256 * 1024 * 1024 {
+        return Err("文件超过 256MB，暂不支持".into());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("读取失败：{e}"))?;
+    Ok(serde_json::json!({
+        "path": path,
+        "size": meta.len(),
+        "text": text,
+    }))
+}
+
+#[tauri::command]
+pub fn json_write_file(path: String, content: String) -> Result<usize, String> {
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("写入失败：{e}"))?;
+    Ok(content.len())
 }
 
 #[tauri::command]

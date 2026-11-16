@@ -3,5 +3,10 @@
   "identifier": "shot",
   "description": "截图覆盖层与贴图窗口",
   "windows": ["shot", "pin-*", "json", "settings"],
-  "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-close"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "dialog:default"
+  ]
 }
