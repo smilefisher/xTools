@@ -227,6 +227,8 @@ fn create_pin(app: &AppHandle, frame: &capture::Frame, x: i32, y: i32) -> Result
     let logical_h = (frame.height as f64 / scale).max(24.0);
     let pos_x = x as f64 / scale;
     let pos_y = y as f64 / scale;
+    let pixel_w = frame.width;
+    let pixel_h = frame.height;
 
     // 贴图窗同样在后台线程创建，避免命令线程把主线程等死
     let app = app.clone();
@@ -248,6 +250,9 @@ fn create_pin(app: &AppHandle, frame: &capture::Frame, x: i32, y: i32) -> Result
         .build()
         {
             Ok(window) => {
+                // 按物理像素精确对齐，避免 logical→physical 取整后图片被拉伸出一条缝
+                let _ = window.set_size(Size::Physical(PhysicalSize::new(pixel_w, pixel_h)));
+                let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
                 let _ = window.set_focus();
             }
             Err(err) => eprintln!("[pin] 创建贴图窗失败：{err}"),
