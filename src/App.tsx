@@ -19,7 +19,8 @@ type FileStatus = { ready: boolean; entries: number };
 type Row =
   | { kind: "app"; hit: AppHit }
   | { kind: "file"; hit: FileHit }
-  | { kind: "json"; text: string };
+  | { kind: "json"; text: string }
+  | { kind: "cmd"; action: "shot" | "json" | "settings"; label: string };
 
 type Mode = "" | "a" | "f" | "j";
 
@@ -71,11 +72,23 @@ export default function App() {
     return null;
   });
 
+  const commands = createMemo<Row[]>(() => {
+    if (query().trim()) return [];
+    return [
+      { kind: "cmd", action: "shot", label: "截图 / 贴图" },
+      { kind: "cmd", action: "json", label: "JSON 工具" },
+      { kind: "cmd", action: "settings", label: "设置" },
+    ];
+  });
+
   const rows = createMemo<Row[]>(() => [
+    ...commands(),
     ...(jsonIntent() !== null ? [{ kind: "json" as const, text: jsonIntent()! }] : []),
     ...apps().map((hit) => ({ kind: "app" as const, hit })),
     ...files().map((hit) => ({ kind: "file" as const, hit })),
   ]);
+
+  const offset = createMemo(() => commands().length + (jsonIntent() !== null ? 1 : 0));
 
   const flash = (message: string) => {
     setToast(message);
@@ -142,6 +155,10 @@ export default function App() {
     try {
       if (row.kind === "json") {
         await invoke("json_open", { text: row.text || null });
+      } else if (row.kind === "cmd") {
+        if (row.action === "shot") await invoke("shot_begin");
+        else if (row.action === "json") await invoke("json_open", { text: null });
+        else await invoke("settings_open");
       } else if (row.kind === "app") {
         await invoke("app_launch", { id: row.hit.id });
       } else if (reveal) {
@@ -441,10 +458,45 @@ export default function App() {
       </div>
 
       <div class="list" ref={listEl}>
+        <For each={commands()}>
+          {(item, index) => (
+            <div
+              class="row"
+              data-row={index()}
+              classList={{ active: index() === selected() }}
+              onMouseEnter={() => setSelected(index())}
+              onClick={() => void activate(item)}
+            >
+              <span class="icon letter">
+                {item.kind === "cmd"
+                  ? item.action === "shot"
+                    ? "⛶"
+                    : item.action === "json"
+                      ? "{}"
+                      : "⚙"
+                  : ""}
+              </span>
+              <span class="text">
+                <span class="title">{item.kind === "cmd" ? item.label : ""}</span>
+                <span class="desc">
+                  {item.kind === "cmd" && item.action === "shot"
+                    ? "选区截图，回车复制 / Ctrl+回车 贴到屏幕"
+                    : item.kind === "cmd" && item.action === "json"
+                      ? "格式化、查询、树视图、打开文件"
+                      : "热键、索引、开机自启"}
+                </span>
+              </span>
+              <Show when={index() === selected()}>
+                <span class="tag">↵</span>
+              </Show>
+            </div>
+          )}
+        </For>
+
         <Show when={jsonIntent() !== null}>
           <div
             class="row"
-            classList={{ active: selected() === 0 }}
+            classList={{ active: selected() === commands().length }}
             onMouseEnter={() => setSelected(0)}
             onClick={() => void activate({ kind: "json", text: jsonIntent() ?? "" })}
           >
@@ -455,14 +507,14 @@ export default function App() {
                 {jsonIntent()?.trim() ? "把这段内容带进编辑器" : "打开空编辑器"}
               </span>
             </span>
-            <Show when={selected() === 0}>
+            <Show when={selected() === commands().length}>
               <span class="tag">↵</span>
             </Show>
           </div>
         </Show>
 
         <For each={apps()}>
-          {(item, index) => renderApp(item, index() + (jsonIntent() !== null ? 1 : 0))}
+          {(item, index) => renderApp(item, index() + offset())}
         </For>
 
         <Show when={files().length > 0}>
@@ -478,7 +530,7 @@ export default function App() {
             {(item, index) =>
               renderFile(
                 item,
-                (jsonIntent() !== null ? 1 : 0) + apps().length + index(),
+                offset() + apps().length + index(),
               )
             }
           </For>

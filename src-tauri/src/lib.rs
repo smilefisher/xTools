@@ -723,12 +723,20 @@ pub fn run() {
                 }
             }
 
-            if let Err(err) = hotkey::register_action(&handle, "alt+shift+a", |app| {
+            let shot_hotkey = settings::current().shot_hotkey;
+            if let Err(err) = hotkey::register_action(&handle, &shot_hotkey, |app| {
                 crate::shot::toggle(app);
             }) {
-                eprintln!("[hotkey] 截图热键注册失败：{err}");
+                eprintln!("[hotkey] 截图热键 {shot_hotkey} 注册失败：{err}");
+                for fallback in ["alt+shift+a", "alt+a", "ctrl+shift+a"] {
+                    if hotkey::register_action(&handle, fallback, |app| crate::shot::toggle(app)).is_ok()
+                    {
+                        eprintln!("[hotkey] 截图热键已回退到 {fallback}");
+                        break;
+                    }
+                }
             } else {
-                eprintln!("[boot] 截图热键 Alt+Shift+A 就绪");
+                eprintln!("[boot] 截图热键 {shot_hotkey} 就绪");
             }
 
             bench::maybe_start(&handle);

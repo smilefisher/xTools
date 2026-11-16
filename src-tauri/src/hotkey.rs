@@ -40,8 +40,16 @@ pub fn reregister_all(app: &AppHandle) -> Vec<String> {
         }
     }
 
-    if let Err(err) = register_action(app, "alt+shift+a", |app| crate::shot::toggle(app)) {
+    if let Err(err) = register_action(app, &crate::settings::current().shot_hotkey, |app| {
+        crate::shot::toggle(app)
+    }) {
         problems.push(format!("截图热键注册失败：{err}"));
+        for fallback in ["alt+shift+a", "alt+a", "ctrl+shift+a"] {
+            if register_action(app, fallback, |app| crate::shot::toggle(app)).is_ok() {
+                problems.push(format!("截图热键已回退到 {fallback}"));
+                break;
+            }
+        }
     }
 
     problems

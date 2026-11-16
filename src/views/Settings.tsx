@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 type Settings = {
   hotkey: string;
+  shot_hotkey: string;
   autohide_on_blur: boolean;
   theme: string;
   index_roots: string[];
@@ -139,7 +140,15 @@ export default function SettingsView() {
                   placeholder="alt+space"
                 />
               </label>
-              <p class="settings-tip">截图热键固定为 Alt+Shift+A；保存后立即重新注册。</p>
+              <label class="settings-row">
+                <span>截图</span>
+                <input
+                  value={settings().shot_hotkey}
+                  onInput={(event) => patch({ shot_hotkey: event.currentTarget.value })}
+                  placeholder="ctrl+alt+a"
+                />
+              </label>
+              <p class="settings-tip">默认 Ctrl+Alt+A（避开中文系统的 Alt+Shift 输入法切换）；保存后立即重新注册。</p>
 
               <label class="settings-row">
                 <span>失焦自动收起</span>

@@ -15,6 +15,8 @@ pub struct Settings {
     pub theme: String,
     /// 文件索引根目录；空表示默认 `%USERPROFILE%`
     pub index_roots: Vec<String>,
+    /// 截图热键；默认避开 Alt+Shift（中文系统里是输入法切换键）
+    pub shot_hotkey: String,
 }
 
 impl Default for Settings {
@@ -24,6 +26,7 @@ impl Default for Settings {
             autohide_on_blur: true,
             theme: "dark".into(),
             index_roots: Vec::new(),
+            shot_hotkey: "ctrl+alt+a".into(),
         }
     }
 }
