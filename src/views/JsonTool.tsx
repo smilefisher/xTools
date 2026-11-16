@@ -263,6 +263,60 @@ export default function JsonTool() {
       setStatus("已载入外部内容");
     }
 
+    // 界面自测通道：跑一遍全部操作并把结果打进日志
+    const probeOff = await listen("json:probe", async () => {
+      const report: string[] = [];
+      try {
+        const formatted = await invoke<JsonResult>("json_format", { text: text() });
+        report.push(`format ok=${formatted.ok} out=${JSON.stringify(formatted.output.slice(0, 40))}`);
+        if (formatted.ok) replace(formatted.output);
+      } catch (err) {
+        report.push(`format THREW ${String(err)}`);
+      }
+      try {
+        const minified = await invoke<JsonResult>("json_minify", { text: text() });
+        report.push(`minify ok=${minified.ok} len=${minified.output.length}`);
+      } catch (err) {
+        report.push(`minify THREW ${String(err)}`);
+      }
+      try {
+        const valid = await invoke<JsonResult>("json_validate", { text: text() });
+        report.push(`validate ok=${valid.ok} msg=${valid.ok ? valid.output : valid.error?.message}`);
+      } catch (err) {
+        report.push(`validate THREW ${String(err)}`);
+      }
+      try {
+        const queried = await invoke<JsonResult>("json_query", { text: text(), path: "$.name" });
+        report.push(`query ok=${queried.ok} out=${JSON.stringify(queried.output.slice(0, 30))}`);
+      } catch (err) {
+        report.push(`query THREW ${String(err)}`);
+      }
+      try {
+        const treeResult = await invoke<JsonTree>("json_tree", { text: text(), limit: 200 });
+        report.push(`tree ok=${treeResult.ok} nodes=${treeResult.nodes.length}`);
+        setTree(treeResult);
+        setShowTree(true);
+      } catch (err) {
+        report.push(`tree THREW ${String(err)}`);
+      }
+      try {
+        const outlineResult = await invoke<JsonOutline>("json_outline", {
+          text: text(),
+          depth: 2,
+          limit: 200,
+        });
+        report.push(`outline ok=${outlineResult.ok} nodes=${outlineResult.nodes.length}`);
+      } catch (err) {
+        report.push(`outline THREW ${String(err)}`);
+      }
+      const editorHeight = host?.clientHeight ?? -1;
+      const editorWidth = host?.clientWidth ?? -1;
+      report.push(`editor box ${editorWidth}x${editorHeight}`);
+      report.push(`toolbar buttons=${document.querySelectorAll(".json-toolbar button").length}`);
+      void invoke("log_frontend", { message: `JSON PROBE | ${report.join(" | ")}` }).catch(() => {});
+    });
+    onCleanup(() => probeOff());
+
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
   };

@@ -795,7 +795,26 @@ pub fn run() {
                 });
             }
 
-            if std::env::args().any(|arg| arg == "--probe-json") {
+            if std::env::args().any(|arg| arg == "--probe-json-ui") {
+        let app = handle.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+            let sample = r#"{"name":"xTools","list":[1,2,{"deep":true}],"s":"文本"}"#;
+            match crate::shot::open_json(&app, Some(sample.to_string())) {
+                Ok(()) => eprintln!("[probe-json-ui] 窗口已打开"),
+                Err(err) => eprintln!("[probe-json-ui] 打开失败：{err}"),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            if let Some(window) = app.get_webview_window("json") {
+                let _ = tauri::Emitter::emit(&window, "json:probe", ());
+                eprintln!("[probe-json-ui] 已发送自测事件");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            app.exit(0);
+        });
+    }
+
+    if std::env::args().any(|arg| arg == "--probe-json") {
                 let app = handle.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(2000));

@@ -309,8 +309,16 @@ pub fn open_json(app: &AppHandle, text: Option<String>) -> Result<(), String> {
         .inner_size(960.0, 640.0)
         .min_inner_size(480.0, 320.0)
         .center()
+        .focused(true)
+        .always_on_top(true)
         .build()
         .map_err(|e| e.to_string())?;
+
+    // 新窗口偶尔会落在其它窗口后面，补一次前台
+    if let Some(window) = app.get_webview_window(JSON_LABEL) {
+        let _ = window.set_focus();
+        let _ = window.unminimize();
+    }
     Ok(())
 }
 

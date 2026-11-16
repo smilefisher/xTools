@@ -398,9 +398,21 @@ pub fn uwp_apps() -> Vec<(String, String)> {
     if let Some(cached) = load_uwp_cache() {
         return cached;
     }
-    let fresh = fetch_uwp_apps();
-    save_uwp_cache(&fresh);
-    fresh
+
+    // 缓存缺失时不能在启动路径上同步跑 PowerShell（实测会卡 3.9 秒），
+    // 改为后台抓取并落盘，下次启动生效
+    std::thread::spawn(|| {
+        let started = std::time::Instant::now();
+        let fresh = fetch_uwp_apps();
+        let count = fresh.len();
+        save_uwp_cache(&fresh);
+        eprintln!(
+            "[uwp] 后台抓取 {count} 个 UWP 应用，用时 {:.1}s",
+            started.elapsed().as_secs_f64()
+        );
+    });
+
+    Vec::new()
 }
 
 fn fetch_uwp_apps() -> Vec<(String, String)> {
