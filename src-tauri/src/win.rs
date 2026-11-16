@@ -142,7 +142,7 @@ fn place_on_cursor_monitor(app: &AppHandle, win: &WebviewWindow) {
 
 /// Windows 上 `SetForegroundWindow` 会被前台锁挡住，用 AttachThreadInput 临时并入前台线程。
 #[cfg(windows)]
-fn force_foreground(win: &WebviewWindow) {
+pub(crate) fn force_foreground(win: &WebviewWindow) {
     use std::ffi::c_void;
 
     use windows::Win32::Foundation::HWND;
@@ -177,4 +177,4 @@ fn force_foreground(win: &WebviewWindow) {
 }
 
 #[cfg(not(windows))]
-fn force_foreground(_win: &WebviewWindow) {}
+pub(crate) fn force_foreground(_win: &WebviewWindow) {}

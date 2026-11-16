@@ -355,6 +355,7 @@ pub fn open_json(app: &AppHandle, text: Option<String>) -> Result<(), String> {
                     }
                     let _ = window.set_focus();
                     let _ = window.unminimize();
+                    crate::win::force_foreground(&window);
                 }
             }
             Err(err) => eprintln!("[json] 创建窗口失败：{err}"),
