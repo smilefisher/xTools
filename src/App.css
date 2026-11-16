@@ -701,9 +701,13 @@ kbd {
   margin-right: 10px;
 }
 
-/* 贴图窗：1px 内描边 + 淡淡的暗角，让它看起来是「贴上去的一张图」 */
+/* 贴图窗：默认无边框，鼠标悬停才显一条 1px 细线，避免干扰画面 */
 .pin-image {
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.35),
-              inset 0 0 0 2px rgb(0 0 0 / 0.35);
-  border-radius: 2px;
+  box-shadow: none;
+  border-radius: 0;
+  cursor: move;
+}
+
+.pin-root:hover .pin-image {
+  box-shadow: inset 0 0 0 1px rgb(91 140 255 / 0.85);
 }
