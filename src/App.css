@@ -689,3 +689,9 @@ kbd {
 .ctx-menu button:hover {
   background: rgb(91 140 255 / 0.25);
 }
+
+/* 文件夹行：图标染成琥珀色，一眼区分 */
+.row .icon.folder {
+  color: #f0b429;
+  font-size: 15px;
+}

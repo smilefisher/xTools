@@ -30,6 +30,8 @@ enum Term {
     Path(Vec<u8>),
     SizeMin(u64),
     SizeMax(u64),
+    OnlyDir,
+    OnlyFile,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -56,6 +58,10 @@ impl Query {
                 if !part.is_empty() {
                     terms.push(Term::Path(part));
                 }
+            } else if lower == b"is:dir" || lower == b"is:folder" {
+                terms.push(Term::OnlyDir);
+            } else if lower == b"is:file" {
+                terms.push(Term::OnlyFile);
             } else if lower.starts_with(b"size:") {
                 if let Some((min, max)) = parse_size(&lower[5..]) {
                     if let Some(min) = min {
@@ -233,26 +239,41 @@ fn score_entry(name: &[u8], terms: &[Term], index: &Index, idx: u32, entry: &Ent
                     return None;
                 }
             }
+            Term::OnlyDir => {
+                if !entry.is_dir {
+                    return None;
+                }
+                score += 200;
+            }
+            Term::OnlyFile => {
+                if entry.is_dir {
+                    return None;
+                }
+                score += 200;
+            }
         }
     }
     Some(score)
 }
 
 /// 沿父链找目录名是否包含关键词（不拼完整路径，省一次分配）。
+/// 自身名字也算在内——`path:src` 应该能命中 `src` 这个目录本身。
 fn path_matches(index: &Index, idx: u32, needle: &[u8]) -> bool {
-    let mut cursor = index.entries[idx as usize].parent;
+    let mut cursor = idx;
     let mut depth = 0;
-    while cursor != crate::NO_PARENT && depth < 64 {
+    loop {
         let entry = &index.entries[cursor as usize];
         let name = &index.names
             [entry.name_off as usize..entry.name_off as usize + entry.name_len as usize];
         if find_ci(name, needle).is_some() {
             return true;
         }
+        if entry.parent == crate::NO_PARENT || depth >= 64 {
+            return false;
+        }
         cursor = entry.parent;
         depth += 1;
     }
-    false
 }
 
 /// 单条名字打分；不匹配返回 None。
@@ -344,6 +365,15 @@ mod tests {
         let hits = search(&index, &combined, 10);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "big.bin");
+
+        let by_dir = Query::parse("is:dir path:src");
+        let hits = search(&index, &by_dir, 10);
+        assert!(hits.iter().all(|hit| hit.is_dir), "is:dir 过滤漏了文件");
+        assert!(!hits.is_empty());
+
+        let only_files = Query::parse("is:file");
+        let hits = search(&index, &only_files, 10);
+        assert!(hits.iter().all(|hit| !hit.is_dir));
 
         let _ = std::fs::remove_dir_all(&root);
     }

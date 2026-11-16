@@ -351,17 +351,19 @@ export default function App() {
         setMenu({ x: event.clientX, y: event.clientY, row: { kind: "file", hit: item } });
       }}
     >
-      <span class="icon letter">{item.is_dir ? "▸" : "·"}</span>
+      <span class="icon letter" classList={{ folder: item.is_dir }}>
+        {item.is_dir ? "▸" : "·"}
+      </span>
       <span class="text">
         <span class="title">
           {item.name}
-          <Show when={formatSize(item.size, item.is_dir) || formatDate(item.mtime)}>
-            <span class="meta">
-              {formatSize(item.size, item.is_dir)}
-              <Show when={formatSize(item.size, item.is_dir) && formatDate(item.mtime)}> · </Show>
+          <span class="meta">
+            {item.is_dir ? "文件夹" : formatSize(item.size, false)}
+            <Show when={formatDate(item.mtime)}>
+              <Show when={item.is_dir || formatSize(item.size, false)}> · </Show>
               {formatDate(item.mtime)}
-            </span>
-          </Show>
+            </Show>
+          </span>
         </span>
         <span class="desc">{item.path}</span>
       </span>
@@ -411,7 +413,7 @@ export default function App() {
           ref={inputEl}
           autofocus
           spellcheck={false}
-          placeholder="搜索应用与文件　·　f 文件名　a 应用名　j/{ JSON"
+          placeholder="搜索应用与文件　·　f 文件名　a 应用名　is:dir 只看文件夹"
           value={query()}
           onInput={(event) => {
             const text = event.currentTarget.value;
