@@ -220,6 +220,23 @@ pub fn copy_text(text: &str) -> Result<(), String> {
     }
 }
 
+/// 剪贴板里当前是否有位图（自检用）。
+pub fn clipboard_has_image() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Ole::{CF_DIB, CF_DIBV5};
+        use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
+        unsafe {
+            IsClipboardFormatAvailable(CF_DIB.0 as u32).is_ok()
+                || IsClipboardFormatAvailable(CF_DIBV5.0 as u32).is_ok()
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// 贴图 PNG 的落盘目录。
 pub fn pin_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("xtools").join("pins"))

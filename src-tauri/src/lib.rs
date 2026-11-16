@@ -810,7 +810,38 @@ pub fn run() {
                 });
             }
 
-            if std::env::args().any(|arg| arg == "--probe-json-from-palette") {
+            if std::env::args().any(|arg| arg == "--probe-shot-flow") {
+        let app = handle.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(2200));
+            crate::shot::begin(&app);
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            if let Some(window) = app.get_webview_window("shot") {
+                let _ = tauri::Emitter::emit(&window, "shot:probe", ());
+                eprintln!("[probe-shot-flow] 已触发提交");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+
+            let overlay_visible = app
+                .get_webview_window("shot")
+                .map(|w| w.is_visible().unwrap_or(false))
+                .unwrap_or(false);
+            eprintln!(
+                "[probe-shot-flow] 覆盖层可见={overlay_visible} 剪贴板有位图={}",
+                crate::capture::clipboard_has_image()
+            );
+            let pins: Vec<String> = ["pin-1", "pin-2", "pin-3"]
+                .iter()
+                .filter(|label| app.get_webview_window(label).is_some())
+                .map(|label| label.to_string())
+                .collect();
+            eprintln!("[probe-shot-flow] 贴图窗：{pins:?}");
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            app.exit(0);
+        });
+    }
+
+    if std::env::args().any(|arg| arg == "--probe-json-from-palette") {
         let app = handle.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(2000));

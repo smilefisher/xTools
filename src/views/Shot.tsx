@@ -23,6 +23,14 @@ export default function Shot() {
   const [ops, setOps] = createSignal<Op[]>([]);
   const [draft, setDraft] = createSignal<Op | null>(null);
   const [busy, setBusy] = createSignal(false);
+  const [toast, setToast] = createSignal("");
+  let toastTimer: number | undefined;
+
+  const flash = (message: string) => {
+    setToast(message);
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => setToast(""), 2000);
+  };
 
   let start = { x: 0, y: 0 };
   let canvas: HTMLCanvasElement | undefined;
@@ -44,6 +52,33 @@ export default function Shot() {
 
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+
+    // 自测通道：用固定选区走一遍真实提交（复制 + 贴图）
+    const probeOff = await listen("shot:probe", async () => {
+      const origin = rect();
+      if (!origin) {
+        void invoke("log_frontend", { message: "shot:probe 无屏幕信息" }).catch(() => {});
+        return;
+      }
+      const scale = dpr();
+      setSelection({ x: 100, y: 100, w: 320, h: 200 });
+      try {
+        const result = await invoke<Record<string, unknown>>("shot_commit", {
+          x: Math.round(origin.x + 100 * scale),
+          y: Math.round(origin.y + 100 * scale),
+          width: Math.round(320 * scale),
+          height: Math.round(200 * scale),
+          pin: true,
+          ops: [],
+        });
+        void invoke("log_frontend", {
+          message: `shot:probe 提交结果 ${JSON.stringify(result)}`,
+        }).catch(() => {});
+      } catch (err) {
+        void invoke("log_frontend", { message: `shot:probe 失败 ${String(err)}` }).catch(() => {});
+      }
+    });
+    onCleanup(() => probeOff());
   });
 
   const reset = () => {
@@ -268,7 +303,7 @@ export default function Shot() {
     setBusy(true);
     const scale = dpr();
     try {
-      await invoke("shot_commit", {
+      const result = await invoke<Record<string, unknown>>("shot_commit", {
         x: Math.round(origin.x + sel.x * scale),
         y: Math.round(origin.y + sel.y * scale),
         width: Math.round(sel.w * scale),
@@ -276,8 +311,11 @@ export default function Shot() {
         pin,
         ops: ops().map((op) => scaleOp(op, { x: sel.x, y: sel.y })),
       });
+      if (result && result.clipboard === false) {
+        flash("已保存，但剪贴板写入被拒绝");
+      }
     } catch (err) {
-      console.error(err);
+      flash(`提交失败：${String(err)}`);
       setBusy(false);
     }
   };
@@ -322,6 +360,11 @@ export default function Shot() {
                   left: `${sel().x}px`,
                   top: `${Math.max(sel().y - 46, 8)}px`,
                 }}
+                // 关键：不阻止 pointerdown 的话，点按钮会被外层当成「重新拉选区」，
+                // 选区被重置成 0×0，随后 commit 直接判「选区太小」
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
               >
                 <For each={tools}>
                   {(item) => (
@@ -370,6 +413,9 @@ export default function Shot() {
       </Show>
 
       <div class="shot-hint">
+        <Show when={toast()}>
+          <span class="shot-toast">{toast()}</span>
+        </Show>
         <Show
           when={selection() && selection()!.w > 4}
           fallback={"拖动选择区域　·　Esc 取消"}

@@ -4,13 +4,13 @@
 
 ## 下载
 
-最新安装包：**[xTools_0.1.4_x64-setup.exe](https://github.com/smilefisher/xTools/releases/latest)**
+最新安装包：**[xTools_0.1.5_x64-setup.exe](https://github.com/smilefisher/xTools/releases/latest)**
 
 用户级安装，不需要管理员；安装包内含主程序与索引助手，约 1.9 MB。打 tag 会由 GitHub Actions 自动构建并发布（[Release 页面](https://github.com/smilefisher/xTools/releases)）。
 
 ### 版本记录
 
-- **0.1.4**：截图热键改为 `Ctrl+Alt+A`（避开中文系统的 Alt+Shift 输入法切换）；面板空查询时显示「截图 / JSON / 设置」命令入口；截图热键可在设置里改`n- **0.1.3**：文件夹在结果中高亮显示（琥珀色图标 + 「文件夹」标注）；新增 `is:dir` / `is:file` 过滤；`path:` 现在也匹配条目自身名字`n- **0.1.2**：JSON 工具支持打开/保存文件；设置面板加入索引状态、重建索引、安装/卸载索引服务；文件搜索支持 `size:` 与 `path:` 过滤`n- **0.1.1**：修复从面板打开 JSON 工具 / 设置窗口 / 截图覆盖层时的**主线程死锁**（表现为窗口打不开、整个界面假死）；窗口创建统一改为后台线程
+- **0.1.5**：修复点「复制 / 贴图」按钮时选区被重置成 0×0、导致截图既不复制也不贴图的问题；提交失败会显示提示`n- **0.1.4**：截图热键改为 `Ctrl+Alt+A`（避开中文系统的 Alt+Shift 输入法切换）；面板空查询时显示「截图 / JSON / 设置」命令入口；截图热键可在设置里改`n- **0.1.3**：文件夹在结果中高亮显示（琥珀色图标 + 「文件夹」标注）；新增 `is:dir` / `is:file` 过滤；`path:` 现在也匹配条目自身名字`n- **0.1.2**：JSON 工具支持打开/保存文件；设置面板加入索引状态、重建索引、安装/卸载索引服务；文件搜索支持 `size:` 与 `path:` 过滤`n- **0.1.1**：修复从面板打开 JSON 工具 / 设置窗口 / 截图覆盖层时的**主线程死锁**（表现为窗口打不开、整个界面假死）；窗口创建统一改为后台线程
 - **0.1.0**：首个可用版本（搜应用含 UWP、文件搜索含 MFT、截图贴图、JSON 工具）
 
 四个功能均已实现并在真机验证；仅「MFT 提权索引」一条路径仍待一次 UAC 实测（见文末检查清单）。
@@ -36,7 +36,7 @@
 ```bash
 npm install
 npm run app        # tauri dev（热重载）
-npm run dist       # NSIS 安装包：target/release/bundle/nsis/xTools_0.1.4_x64-setup.exe（约 1.9MB）
+npm run dist       # NSIS 安装包：target/release/bundle/nsis/xTools_0.1.5_x64-setup.exe（约 1.9MB）
 npm run typecheck  # 前端类型检查
 cargo test --workspace   # Rust 单测（19 个）
 ```

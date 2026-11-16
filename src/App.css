@@ -695,3 +695,8 @@ kbd {
   color: #f0b429;
   font-size: 15px;
 }
+
+.shot-toast {
+  color: #ffb86b;
+  margin-right: 10px;
+}
