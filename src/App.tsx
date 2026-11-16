@@ -275,6 +275,13 @@ export default function App() {
       }).catch(() => {});
     });
 
+    // 复现「从面板打开 JSON 工具」的完整路径（含先隐藏面板）
+    await listen<string>("ui:json", async (event) => {
+      void invoke("log_frontend", { message: "ui:json 收到，开始打开 JSON 工具" }).catch(() => {});
+      await activate({ kind: "json", text: event.payload });
+      void invoke("log_frontend", { message: "ui:json 已调用 json_open" }).catch(() => {});
+    });
+
     await refreshStatus();
     void invoke("frontend_ready").catch(() => {});
   });

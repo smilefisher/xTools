@@ -64,42 +64,63 @@ pub fn toggle(app: &AppHandle) {
 }
 
 /// 显示覆盖窗并返回该屏的物理矩形。
+///
+/// 首次创建放到后台线程：热键回调可能在主线程上，直接建窗会自锁。
 pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
-    let Ok(window) = ensure_overlay(app) else {
-        eprintln!("[shot] 无法创建覆盖窗");
-        return None;
-    };
-
     let cursor = app.cursor_position().ok()?;
     let monitor = app.monitor_from_point(cursor.x, cursor.y).ok()??;
     let origin = monitor.position();
     let size = monitor.size();
-
-    let _ = window.set_position(Position::Physical(PhysicalPosition::new(origin.x, origin.y)));
-    let _ = window.set_size(Size::Physical(PhysicalSize::new(size.width, size.height)));
-    let _ = window.show();
-    let _ = window.set_focus();
+    let (ox, oy, sw, sh) = (origin.x, origin.y, size.width, size.height);
 
     if let Ok(mut guard) = last_rect().lock() {
         *guard = Some((origin.x, origin.y, size.width, size.height));
     }
 
-    let _ = window.emit(
-        "shot:begin",
-        serde_json::json!({
-            "x": origin.x,
-            "y": origin.y,
-            "width": size.width,
-            "height": size.height,
-        }),
-    );
-
-    Some(serde_json::json!({
+    let payload = serde_json::json!({
         "x": origin.x,
         "y": origin.y,
         "width": size.width,
         "height": size.height,
-    }))
+    });
+
+    if let Some(window) = overlay_window(app) {
+        let _ = window.set_position(Position::Physical(PhysicalPosition::new(origin.x, origin.y)));
+        let _ = window.set_size(Size::Physical(PhysicalSize::new(size.width, size.height)));
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("shot:begin", payload.clone());
+        return Some(payload);
+    }
+
+    let app = app.clone();
+    let emit_payload = payload.clone();
+    std::thread::spawn(move || {
+        match WebviewWindowBuilder::new(&app, SHOT_LABEL, WebviewUrl::App("index.html#shot".into()))
+            .title("xTools Shot")
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .shadow(false)
+            .visible(false)
+            .focused(true)
+            .build()
+        {
+            Ok(window) => {
+                let _ = window
+                    .set_position(Position::Physical(PhysicalPosition::new(ox, oy)));
+                let _ = window.set_size(Size::Physical(PhysicalSize::new(sw, sh)));
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.emit("shot:begin", emit_payload);
+            }
+            Err(err) => eprintln!("[shot] 创建覆盖窗失败：{err}"),
+        }
+    });
+
+    Some(payload)
 }
 
 /// 提交选区：隐藏覆盖窗 → 抓屏 → 剪贴板（+ 可选贴图）。
@@ -204,25 +225,35 @@ fn create_pin(app: &AppHandle, frame: &capture::Frame, x: i32, y: i32) -> Result
 
     let logical_w = (frame.width as f64 / scale).max(24.0);
     let logical_h = (frame.height as f64 / scale).max(24.0);
+    let pos_x = x as f64 / scale;
+    let pos_y = y as f64 / scale;
 
-    let window = WebviewWindowBuilder::new(
-        app,
-        &label,
-        WebviewUrl::App(format!("index.html#pin/{id}").into()),
-    )
-    .title("xTools Pin")
-    .inner_size(logical_w, logical_h)
-    .position(x as f64 / scale, y as f64 / scale)
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(false)
-    .shadow(false)
-    .build()
-    .map_err(|e| e.to_string())?;
+    // 贴图窗同样在后台线程创建，避免命令线程把主线程等死
+    let app = app.clone();
+    std::thread::spawn(move || {
+        match WebviewWindowBuilder::new(
+            &app,
+            &label,
+            WebviewUrl::App(format!("index.html#pin/{id}").into()),
+        )
+        .title("xTools Pin")
+        .inner_size(logical_w, logical_h)
+        .position(pos_x, pos_y)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .shadow(false)
+        .build()
+        {
+            Ok(window) => {
+                let _ = window.set_focus();
+            }
+            Err(err) => eprintln!("[pin] 创建贴图窗失败：{err}"),
+        }
+    });
 
-    let _ = window.set_focus();
     Ok(id)
 }
 
@@ -290,6 +321,9 @@ fn pending_json() -> &'static Mutex<Option<String>> {
 }
 
 /// 打开（或聚焦）JSON 工具窗口，可附带一段初始内容。
+///
+/// 注意：窗口创建必须放到后台线程。同步命令在主线程执行，
+/// 而 `WebviewWindowBuilder::build()` 需要回主线程——直接调用会自己等自己卡死。
 pub fn open_json(app: &AppHandle, text: Option<String>) -> Result<(), String> {
     if let Some(text) = text.clone() {
         *pending_json().lock().unwrap() = Some(text);
@@ -304,21 +338,29 @@ pub fn open_json(app: &AppHandle, text: Option<String>) -> Result<(), String> {
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(app, JSON_LABEL, WebviewUrl::App("index.html#json".into()))
-        .title("xTools · JSON")
-        .inner_size(960.0, 640.0)
-        .min_inner_size(480.0, 320.0)
-        .center()
-        .focused(true)
-        .always_on_top(true)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        match WebviewWindowBuilder::new(&app, JSON_LABEL, WebviewUrl::App("index.html#json".into()))
+            .title("xTools · JSON")
+            .inner_size(960.0, 640.0)
+            .min_inner_size(480.0, 320.0)
+            .center()
+            .build()
+        {
+            Ok(window) => {
+                // 新窗口偶尔抢不到前台，补几次（点击过面板时通常一次就够）
+                for delay in [0u64, 120, 320] {
+                    if delay > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
+                    }
+                    let _ = window.set_focus();
+                    let _ = window.unminimize();
+                }
+            }
+            Err(err) => eprintln!("[json] 创建窗口失败：{err}"),
+        }
+    });
 
-    // 新窗口偶尔会落在其它窗口后面，补一次前台
-    if let Some(window) = app.get_webview_window(JSON_LABEL) {
-        let _ = window.set_focus();
-        let _ = window.unminimize();
-    }
     Ok(())
 }
 
@@ -344,17 +386,27 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(
-        app,
-        SETTINGS_LABEL,
-        WebviewUrl::App("index.html#settings".into()),
-    )
-    .title("xTools · 设置")
-    .inner_size(560.0, 640.0)
-    .min_inner_size(480.0, 480.0)
-    .center()
-    .build()
-    .map_err(|e| e.to_string())?;
+    // 同 JSON 窗口：必须在后台线程创建，避免主线程自锁
+    let app = app.clone();
+    std::thread::spawn(move || {
+        match WebviewWindowBuilder::new(
+            &app,
+            SETTINGS_LABEL,
+            WebviewUrl::App("index.html#settings".into()),
+        )
+        .title("xTools · 设置")
+        .inner_size(560.0, 640.0)
+        .min_inner_size(480.0, 480.0)
+        .center()
+        .build()
+        {
+            Ok(window) => {
+                let _ = window.set_focus();
+            }
+            Err(err) => eprintln!("[settings] 创建窗口失败：{err}"),
+        }
+    });
+
     Ok(())
 }
 

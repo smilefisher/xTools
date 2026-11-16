@@ -795,7 +795,31 @@ pub fn run() {
                 });
             }
 
-            if std::env::args().any(|arg| arg == "--probe-json-ui") {
+            if std::env::args().any(|arg| arg == "--probe-json-from-palette") {
+        let app = handle.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+            crate::win::show_palette(&app);
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = tauri::Emitter::emit(&main, "ui:json", r#"{"a":1,"b":[2,3]}"#);
+                eprintln!("[probe-json-from-palette] 已触发");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(3000));
+            if let Some(json) = app.get_webview_window("json") {
+                let size = json.outer_size().ok();
+                let visible = json.is_visible().unwrap_or(false);
+                let focused = json.is_focused().unwrap_or(false);
+                eprintln!("[probe-json-from-palette] json 窗口 size={size:?} visible={visible} focused={focused}");
+            } else {
+                eprintln!("[probe-json-from-palette] 没有 json 窗口");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+            app.exit(0);
+        });
+    }
+
+    if std::env::args().any(|arg| arg == "--probe-json-ui") {
         let app = handle.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(2000));
