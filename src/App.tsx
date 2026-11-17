@@ -151,8 +151,11 @@ export default function App() {
 
   const activate = async (row: Row | undefined, reveal = false) => {
     if (!row) return;
-    void invoke("hide_palette");
+
     try {
+      // 顺序很重要：先发动作，最后才收面板。
+      // 反过来的话窗口一隐藏 WebView2 就挂起，紧接着的 IPC 请求会被丢掉，
+      // 表现就是「点了没反应」，而且只偶发。
       if (row.kind === "json") {
         await invoke("json_open", { text: row.text || null });
       } else if (row.kind === "cmd") {
@@ -160,7 +163,7 @@ export default function App() {
         else if (row.action === "json") await invoke("json_open", { text: null });
         else await invoke("settings_open");
       } else if (row.kind === "app") {
-        await invoke("app_launch", { id: row.hit.id });
+        await invoke("app_launch", { id: row.hit.id, admin: false });
       } else if (reveal) {
         await invoke("file_reveal", { path: row.hit.path });
       } else {
@@ -168,7 +171,10 @@ export default function App() {
       }
     } catch (err) {
       flash(`打开失败：${String(err)}`);
+      return;
     }
+
+    void invoke("hide_palette");
   };
 
   const move = (delta: number) => {

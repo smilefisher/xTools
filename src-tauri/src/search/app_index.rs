@@ -503,7 +503,36 @@ fn save_uwp_cache(apps: &[(String, String)]) {
     }
 }
 
+/// 启动应用。放到后台线程执行：`ShellExecuteEx` 在命令线程上可能阻塞，
+/// 而且即使失败也不该让面板卡住。
 pub fn launch(path: &str, run_as_admin: bool) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("启动路径为空".into());
+    }
+    let target = path.to_string();
+    std::thread::spawn(move || {
+        if let Err(err) = launch_blocking(&target, run_as_admin) {
+            eprintln!("[launch] {target} 启动失败：{err}");
+        }
+    });
+    Ok(())
+}
+
+/// 同步版本，供命令行探针确认 ShellExecute 是否真的能拉起程序。
+pub fn launch_blocking_for_test(path: &str) -> Result<(), String> {
+    launch_blocking(path, false)
+}
+
+fn launch_blocking(path: &str, run_as_admin: bool) -> Result<(), String> {
+    // Shell 系列 API 需要线程初始化 COM；初始化失败（已是其它模式）不影响后续调用
+    #[cfg(windows)]
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+    }
+
     // UWP 用 shell: 协议交给资源管理器激活
     if path.starts_with("shell:") {
         return std::process::Command::new("explorer.exe")

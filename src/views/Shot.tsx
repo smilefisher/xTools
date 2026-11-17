@@ -47,6 +47,8 @@ export default function Shot() {
     const unlisten = await listen<Rect>("shot:begin", (event) => {
       setRect(event.payload);
       reset();
+      // 覆盖层可能换到了另一块屏，画布尺寸要重新校准
+      requestAnimationFrame(() => fitCanvas());
     });
     onCleanup(() => unlisten());
 
@@ -210,7 +212,12 @@ export default function Shot() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    // 用物理像素清整块画布：之前按 CSS 像素清，尺寸一变（换屏/DPI）右下角就残留旧线
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+
     if (!box || box.w < 1) return;
 
     if (pending) drawOp(ctx, pending, true);

@@ -224,7 +224,7 @@ kbd {
 .shot-selection {
   position: absolute;
   border: 1px solid #5b8cff;
-  box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.15);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.12);
   background: transparent;
   pointer-events: none;
 }

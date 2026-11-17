@@ -438,6 +438,26 @@ pub fn run() {
         return;
     }
 
+    if let Some(query) = std::env::args()
+        .find_map(|arg| arg.strip_prefix("--probe-launch=").map(|v| v.to_string()))
+    {
+        let index = crate::search::app_index::AppIndex::build();
+        let usage = std::collections::HashMap::new();
+        let hits = index.search(&query, 3, &usage);
+        for hit in &hits {
+            println!("命中：{} → {}", hit.name, hit.target);
+        }
+        if let Some(first) = hits.first() {
+            match crate::search::app_index::launch_blocking_for_test(&first.target) {
+                Ok(()) => println!("启动调用成功"),
+                Err(err) => println!("启动失败：{err}"),
+            }
+        } else {
+            println!("没有命中");
+        }
+        return;
+    }
+
     if std::env::args().any(|arg| arg == "--probe-usn") {
         let volume = xtools_indexer::profile_volume().unwrap_or('C');
         match xtools_indexer::usn::journal::open(volume) {
