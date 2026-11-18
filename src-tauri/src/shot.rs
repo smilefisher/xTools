@@ -111,6 +111,23 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
         *guard = Some((origin.x, origin.y, size.width, size.height));
     }
 
+    // 抓帧前先收起自家面板：冻结帧是在唤起瞬间抓的，
+    // 面板还开着的话会被一起截进图里
+    if let Some(main) = app.get_webview_window(crate::MAIN_LABEL) {
+        if main.is_visible().unwrap_or(false) {
+            let _ = main.hide();
+            eprintln!("[shot] 抓帧前已收起面板");
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+    }
+    // 上一次的覆盖层如果还留着，也先藏掉
+    if let Some(overlay) = overlay_window(app) {
+        if overlay.is_visible().unwrap_or(false) {
+            let _ = overlay.hide();
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+    }
+
     // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里
     match capture::capture_rect(origin.x, origin.y, size.width as i32, size.height as i32) {
         Ok(frame) => *frozen().lock().unwrap() = Some(frame),
