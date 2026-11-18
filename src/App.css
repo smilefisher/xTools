@@ -711,3 +711,14 @@ kbd {
 .pin-root:hover .pin-image {
   box-shadow: inset 0 0 0 1px rgb(91 140 255 / 0.85);
 }
+
+/* 贴图 1:1 渲染：不插值，避免边缘重采样 */
+.pin-image {
+  image-rendering: pixelated;
+}
+
+.pin-stage {
+  position: absolute;
+  inset: 0;
+  display: block;
+}

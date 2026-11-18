@@ -830,7 +830,20 @@ pub fn run() {
                 });
             }
 
-            if std::env::args().any(|arg| arg == "--probe-shot-flow") {
+            if std::env::args().any(|arg| arg == "--probe-pin") {
+        let app = handle.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            match crate::shot::pin_preview(&app, 100, 100, 320, 200) {
+                Ok(id) => eprintln!("[probe-pin] 已贴图 id={id}，停留 20 秒"),
+                Err(err) => eprintln!("[probe-pin] 失败：{err}"),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(20));
+            app.exit(0);
+        });
+    }
+
+    if std::env::args().any(|arg| arg == "--probe-shot-flow") {
         let app = handle.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(2200));

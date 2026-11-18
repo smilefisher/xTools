@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export default function Pin(props: { id: number }) {
   const [src, setSrc] = createSignal("");
+  const [stageZoom, setStageZoom] = createSignal(1);
+  const [natural, setNatural] = createSignal<{ w: number; h: number } | null>(null);
   const [opacity, setOpacity] = createSignal(1);
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
   const [hint, setHint] = createSignal("");
@@ -17,6 +19,11 @@ export default function Pin(props: { id: number }) {
     } catch {
       /* 拿不到图就保持透明 */
     }
+
+    // 高 DPI 下浏览器会把图片先缩小再放大，边缘就发虚、出现白边。
+    // 只对图片容器做 1/dpr 的布局缩放，让 1 CSS px == 1 设备像素；右键菜单不受影响。
+    const dpr = window.devicePixelRatio || 1;
+    setStageZoom(1 / (dpr || 1));
 
     window.addEventListener("keydown", (event) => {
       if (event.key === "Escape") void invoke("pin_close", { id: props.id });
@@ -62,20 +69,34 @@ export default function Pin(props: { id: number }) {
 
   return (
     <div class="pin-root" onWheel={onWheel}>
-      <img
-        class="pin-image"
-        src={src()}
-        alt=""
-        style={{ opacity: opacity() }}
-        draggable={false}
+      <div
+        class="pin-stage"
+        style={{ zoom: String(stageZoom()) }}
         data-tauri-drag-region
-        onDblClick={() => void invoke("pin_close", { id: props.id })}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          setMenu({ x: event.clientX, y: event.clientY });
-        }}
-        onClick={() => setMenu(null)}
-      />
+      >
+        <img
+          class="pin-image"
+          src={src()}
+          alt=""
+          style={{
+            opacity: opacity(),
+            width: natural() ? `${natural()!.w}px` : "100%",
+            height: natural() ? `${natural()!.h}px` : "100%",
+          }}
+          draggable={false}
+          data-tauri-drag-region
+          onLoad={(event) => {
+            const img = event.currentTarget;
+            setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+          }}
+          onDblClick={() => void invoke("pin_close", { id: props.id })}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setMenu({ x: event.clientX, y: event.clientY });
+          }}
+          onClick={() => setMenu(null)}
+        />
+      </div>
 
       <Show when={hint()}>
         <div class="pin-hint">{hint()}</div>

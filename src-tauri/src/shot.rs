@@ -16,7 +16,13 @@ pub const SHOT_LABEL: &str = "shot";
 
 static PINS: OnceLock<Mutex<HashMap<u32, Vec<u8>>>> = OnceLock::new();
 static LAST_RECT: OnceLock<Mutex<Option<(i32, i32, u32, u32)>>> = OnceLock::new();
+/// 唤起时先抓的冻结帧：提交时从它裁剪，保证不把覆盖层遮罩一起截进去
+static FROZEN: OnceLock<Mutex<Option<capture::Frame>>> = OnceLock::new();
 static PIN_SEQ: AtomicU32 = AtomicU32::new(1);
+
+fn frozen() -> &'static Mutex<Option<capture::Frame>> {
+    FROZEN.get_or_init(|| Mutex::new(None))
+}
 
 fn pins() -> &'static Mutex<HashMap<u32, Vec<u8>>> {
     PINS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -77,6 +83,12 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
         *guard = Some((origin.x, origin.y, size.width, size.height));
     }
 
+    // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里
+    match capture::capture_rect(origin.x, origin.y, size.width as i32, size.height as i32) {
+        Ok(frame) => *frozen().lock().unwrap() = Some(frame),
+        Err(err) => eprintln!("[shot] 冻结帧抓取失败：{err}"),
+    }
+
     let payload = serde_json::json!({
         "x": origin.x,
         "y": origin.y,
@@ -123,6 +135,12 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
     Some(payload)
 }
 
+/// 诊断用：抓一块屏幕直接贴图，不写剪贴板。
+pub fn pin_preview(app: &AppHandle, x: i32, y: i32, width: i32, height: i32) -> Result<u32, String> {
+    let frame = capture::capture_rect(x, y, width, height)?;
+    create_pin(app, &frame, x, y)
+}
+
 /// 提交选区：隐藏覆盖窗 → 抓屏 → 剪贴板（+ 可选贴图）。
 ///
 /// 剪贴板写失败（例如锁屏期间系统拒绝访问）不算整体失败：仍然落盘与贴图，
@@ -143,10 +161,19 @@ pub fn commit(
     if let Some(window) = overlay_window(app) {
         let _ = window.hide();
     }
-    // 等一帧，确保覆盖窗已经从屏幕上消失
-    std::thread::sleep(std::time::Duration::from_millis(80));
-
-    let mut frame = capture::capture_rect(x, y, width, height)?;
+    // 覆盖层已隐藏；优先用冻结帧裁剪，拿不到再现场抓（保底）
+    let mut frame = {
+        let mut guard = frozen().lock().unwrap();
+        match guard.take() {
+            Some(frozen_frame) => frozen_frame
+                .crop(x - frozen_frame.x, y - frozen_frame.y, width as u32, height as u32)
+                .ok_or_else(|| "冻结帧裁剪失败".to_string())?,
+            None => {
+                std::thread::sleep(std::time::Duration::from_millis(80));
+                capture::capture_rect(x, y, width, height)?
+            }
+        }
+    };
     if !ops.is_empty() {
         crate::annotate::apply(&mut frame, ops);
     }
