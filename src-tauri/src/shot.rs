@@ -41,6 +41,34 @@ fn overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(SHOT_LABEL)
 }
 
+/// 去掉窗口类的 `CS_DROPSHADOW` 样式。
+///
+/// Tauri 的 `.shadow(false)` 在 Win10 上管不到分层窗口，系统仍会沿窗口类样式
+/// 画一圈投影；贴图窗是无边框透明窗，那圈影看起来就像图片自带的阴影。
+#[cfg(windows)]
+fn kill_drop_shadow(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassLongPtrW, SetClassLongPtrW, GCL_STYLE};
+
+    const CS_DROPSHADOW: u32 = 0x0002_0000;
+
+    if let Ok(hwnd) = window.hwnd() {
+        let handle = HWND(hwnd.0 as *mut core::ffi::c_void);
+        unsafe {
+            let style = GetClassLongPtrW(handle, GCL_STYLE);
+            if style != 0 {
+                let cleaned = (style as u32) & !CS_DROPSHADOW;
+                if cleaned != style as u32 {
+                    SetClassLongPtrW(handle, GCL_STYLE, cleaned as isize);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_drop_shadow(_window: &tauri::WebviewWindow) {}
+
 fn ensure_overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     if let Some(window) = overlay_window(app) {
         return Ok(window);
@@ -269,7 +297,8 @@ fn create_pin(app: &AppHandle, frame: &capture::Frame, x: i32, y: i32) -> Result
         .inner_size(logical_w, logical_h)
         .position(pos_x, pos_y)
         .decorations(false)
-        .transparent(true)
+        // 贴图是矩形截图，不需要透明；透明分层窗口会被系统附加合成阴影
+        .transparent(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
@@ -277,6 +306,7 @@ fn create_pin(app: &AppHandle, frame: &capture::Frame, x: i32, y: i32) -> Result
         .build()
         {
             Ok(window) => {
+                kill_drop_shadow(&window);
                 // 按物理像素精确对齐，避免 logical→physical 取整后图片被拉伸出一条缝
                 let _ = window.set_size(Size::Physical(PhysicalSize::new(pixel_w, pixel_h)));
                 let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
