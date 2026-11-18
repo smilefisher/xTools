@@ -35,7 +35,7 @@ fn probe_apps() {
     );
 
     let usage = std::collections::HashMap::new();
-    for query in ["wei", "微信", "vs", "code", "calc", "设置", "steam", "qq", "qqyy"] {
+    for query in ["wei", "wechat", "微信", "vs", "code", "calc", "设置", "steam", "qq"] {
         let started = std::time::Instant::now();
         let hits = index.search(query, 5, &usage);
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;

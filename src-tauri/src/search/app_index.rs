@@ -24,6 +24,8 @@ pub struct AppEntry {
     key_initials: String,
     #[serde(skip)]
     key_pinyin: String,
+    /// 别名键：快捷方式指向的 exe 名（如 微信 → wechat），用于英文名搜索
+    key_alias: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -80,6 +82,16 @@ impl AppIndex {
                 continue;
             }
             let (key_name, key_initials, key_pinyin) = make_keys(&name);
+            let key_alias = if source == "startmenu" {
+                let lowered = name.to_lowercase();
+                lnk_exe_stems(&path)
+                    .into_iter()
+                    .filter(|stem| !lowered.contains(stem.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                String::new()
+            };
             entries.push(AppEntry {
                 id: fnv1a(path.as_bytes()),
                 name,
@@ -88,6 +100,7 @@ impl AppIndex {
                 key_name,
                 key_initials,
                 key_pinyin,
+                key_alias,
             });
         }
 
@@ -174,6 +187,76 @@ fn recency_bonus(last_used: u64) -> u32 {
     }
 }
 
+/// 从 .lnk 文件里提取目标 exe 的名字（不含扩展名），用于英文名搜索。
+///
+/// 不调用 COM：快捷方式的目标路径本来就以 ANSI/UTF-16 明文存在文件里，
+/// 直接扫 `*.exe` 更省事，也不受 Shell API 签名变化影响。
+fn lnk_exe_stems(path: &str) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let mut candidates: Vec<String> = Vec::new();
+
+    // ANSI：向前找到路径起点，取最后一段
+    let lower: Vec<u8> = bytes.iter().map(|b| b.to_ascii_lowercase()).collect();
+    let mut i = 0usize;
+    while i + 4 <= lower.len() {
+        if &lower[i..i + 4] == b".exe" {
+            let mut start = i;
+            while start > 0 {
+                let c = lower[start - 1];
+                let ok = c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c == b'.' || c == b'\\' || c == b'/';
+                if !ok {
+                    break;
+                }
+                start -= 1;
+            }
+            if let Ok(text) = std::str::from_utf8(&bytes[start..i + 4]) {
+                if let Some(stem) = text.rsplit(['\\', '/']).next() {
+                    let stem = stem.trim_end_matches(".exe").trim_end_matches(".EXE");
+                    if !stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+                        candidates.push(stem.to_ascii_lowercase());
+                    }
+                }
+            }
+            i += 4;
+        } else {
+            i += 1;
+        }
+    }
+
+    // UTF-16LE 形式（较新的 shell 会写这份）
+    let mut j = 0usize;
+    while j + 8 <= bytes.len() {
+        if bytes[j] == b'.' && bytes[j + 2] == b'e' && bytes[j + 4] == b'x' && bytes[j + 6] == b'e'
+            && bytes[j + 1] == 0 && bytes[j + 3] == 0 && bytes[j + 5] == 0 && bytes[j + 7] == 0
+        {
+            let mut start = j;
+            while start >= 2 && bytes[start - 1] == 0 && bytes[start - 2].is_ascii_alphanumeric() {
+                start -= 2;
+            }
+            let units: Vec<u16> = bytes[start..j]
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            if let Ok(text) = String::from_utf16(&units) {
+                let stem = text.trim_end_matches(".exe").to_ascii_lowercase();
+                if !stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+                    candidates.push(stem);
+                }
+            }
+            j += 8;
+        } else {
+            j += 1;
+        }
+    }
+
+    candidates.retain(|stem| stem.len() >= 3 && stem != "exe");
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
 fn make_keys(name: &str) -> (String, String, String) {
     let lower = name.to_lowercase();
     let mut initials = String::with_capacity(name.chars().count());
@@ -225,6 +308,18 @@ fn match_score(entry: &AppEntry, q: &str) -> Option<u32> {
     }
     if entry.key_pinyin.contains(q) {
         return Some(640);
+    }
+    // 别名：目标 exe 名（微信 → wechat）
+    if !entry.key_alias.is_empty() {
+        if entry.key_alias == q {
+            return Some(820);
+        }
+        if entry.key_alias.starts_with(q) {
+            return Some(720);
+        }
+        if entry.key_alias.contains(q) {
+            return Some(600);
+        }
     }
     // 子序列：typo 容忍（如 vs → visual studio code）
     subsequence_score(name, q)
