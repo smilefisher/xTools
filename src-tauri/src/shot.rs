@@ -130,7 +130,19 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
 
     // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里
     match capture::capture_rect(origin.x, origin.y, size.width as i32, size.height as i32) {
-        Ok(frame) => *frozen().lock().unwrap() = Some(frame),
+        Ok(frame) => {
+            if std::env::var_os("XTOOLS_SHOT_DUMP").is_some() {
+                if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
+                    let path = std::path::PathBuf::from(dir)
+                        .join("xtools")
+                        .join("shots")
+                        .join("frozen.png");
+                    let _ = frame.save_png(&path);
+                    eprintln!("[shot] 冻结帧已保存：{}", path.display());
+                }
+            }
+            *frozen().lock().unwrap() = Some(frame)
+        }
         Err(err) => eprintln!("[shot] 冻结帧抓取失败：{err}"),
     }
 
@@ -152,6 +164,11 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
 
     let app = app.clone();
     let emit_payload = payload.clone();
+    let scale = monitor.scale_factor();
+    let logical_w = (sw as f64 / scale).max(1.0);
+    let logical_h = (sh as f64 / scale).max(1.0);
+    let logical_x = ox as f64 / scale;
+    let logical_y = oy as f64 / scale;
     std::thread::spawn(move || {
         match WebviewWindowBuilder::new(&app, SHOT_LABEL, WebviewUrl::App("index.html#shot".into()))
             .title("xTools Shot")
@@ -163,6 +180,10 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
             .shadow(false)
             .visible(false)
             .focused(true)
+            // 关键：建窗时就给全屏尺寸和位置。之前先建默认大小(800x600@52,52)
+            // 再挪过去，中间有几秒窗口停在错误位置，用户此时拖选 → 截图整体偏移
+            .inner_size(logical_w, logical_h)
+            .position(logical_x, logical_y)
             .build()
         {
             Ok(window) => {
