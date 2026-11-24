@@ -3,7 +3,14 @@
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+/// 特殊值：连按两次 Shift（不是 RegisterHotKey 能表达的，走键盘钩子）
+pub const DOUBLE_SHIFT: &str = "dblshift";
+
 pub fn register(app: &AppHandle, spec: &str) -> Result<(), String> {
+    if spec == DOUBLE_SHIFT {
+        crate::dblshift::start(app.clone());
+        return Ok(());
+    }
     register_action(app, spec, |app| crate::win::toggle_palette(app))
 }
 

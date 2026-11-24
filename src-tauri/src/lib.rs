@@ -7,6 +7,7 @@ mod annotate;
 mod autostart;
 mod service_install;
 mod hotkey;
+mod dblshift;
 mod json;
 mod search;
 mod settings;

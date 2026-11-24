@@ -28,8 +28,9 @@ export default function SettingsView() {
   const [recording, setRecording] = createSignal<"hotkey" | "shot_hotkey" | null>(null);
 
   /// 把 "ctrl+alt+a" 显示成 "Ctrl + Alt + A"
-  const prettyHotkey = (spec: string) =>
-    spec
+  const prettyHotkey = (spec: string) => {
+    if (spec.trim().toLowerCase() === "dblshift") return "双击 Shift";
+    return spec
       .split("+")
       .map((part) => {
         const p = part.trim().toLowerCase();
@@ -43,6 +44,7 @@ export default function SettingsView() {
         return p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1);
       })
       .join(" + ");
+  };
 
   /// 从键盘事件生成 "ctrl+alt+a" 形式的字符串；只按了修饰键返回 null
   const hotkeyFromEvent = (event: KeyboardEvent): string | null => {
@@ -84,6 +86,8 @@ export default function SettingsView() {
     return [...parts, name].join("+");
   };
 
+  let lastShiftAt = 0;
+
   const recordHotkey = (which: "hotkey" | "shot_hotkey", event: KeyboardEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -91,6 +95,22 @@ export default function SettingsView() {
       setRecording(null);
       return;
     }
+
+    // 连按两次 Shift = 双击 Shift（走键盘钩子，不是普通热键）
+    if (event.key === "Shift" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const now = performance.now();
+      if (now - lastShiftAt < 420) {
+        lastShiftAt = 0;
+        patch({ [which]: "dblshift" } as Partial<Settings>);
+        setRecording(null);
+        setStatus("已记录「双击 Shift」，点保存生效");
+      } else {
+        lastShiftAt = now;
+        setStatus("再按一次 Shift 即可设为「双击 Shift」");
+      }
+      return;
+    }
+
     const spec = hotkeyFromEvent(event);
     if (!spec) {
       setStatus("请至少按住 Ctrl / Alt / Win 之一再按其它键");
@@ -237,7 +257,7 @@ export default function SettingsView() {
                 </button>
               </div>
               <p class="settings-tip">
-                点一下输入框，然后直接按组合键即可记录（必须含 Ctrl / Alt / Win）。
+                点一下输入框，然后直接按组合键即可记录（必须含 Ctrl / Alt / Win）；连按两次 Shift 可设为「双击 Shift」。
                 截图默认 Ctrl+Alt+A，避开中文系统的 Alt+Shift 输入法切换。改完点「保存」立即重新注册。
               </p>
               <Show when={settings().hotkey === settings().shot_hotkey}>
