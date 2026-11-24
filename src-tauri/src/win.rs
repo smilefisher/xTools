@@ -81,6 +81,15 @@ pub fn focused_once() -> bool {
     FOCUSED_ONCE.load(Ordering::Relaxed)
 }
 
+/// 距离上次显示过了多少毫秒（没显示过返回 u64::MAX）
+pub fn shown_ago_ms() -> u64 {
+    let shown = SHOWN_AT_MS.load(Ordering::Relaxed);
+    if shown == 0 {
+        return u64::MAX;
+    }
+    now_ms().saturating_sub(shown)
+}
+
 /// 面板是否在 `within_ms` 毫秒内刚显示过。
 pub fn shown_within(within_ms: u64) -> bool {
     let shown = SHOWN_AT_MS.load(Ordering::Relaxed);
@@ -179,6 +188,23 @@ pub(crate) fn force_foreground(win: &WebviewWindow) {
 
     unsafe {
         let foreground = GetForegroundWindow();
+
+        // 前台锁：Windows 不允许后台进程直接抢焦点。
+        // 模拟一次 ALT 抬起，让系统把「最近输入」算到本进程头上，随后
+        // SetForegroundWindow 才会被接受（启动器普遍用的做法）。
+        if foreground != hwnd {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                keybd_event, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VK_MENU,
+            };
+            keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_EXTENDEDKEY, 0);
+            keybd_event(
+                VK_MENU.0 as u8,
+                0,
+                KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP,
+                0,
+            );
+            std::thread::sleep(std::time::Duration::from_millis(12));
+        }
         let fg_thread = GetWindowThreadProcessId(foreground, None);
         let cur_thread = GetCurrentThreadId();
         let mut attached = false;

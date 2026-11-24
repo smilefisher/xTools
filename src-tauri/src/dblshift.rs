@@ -3,10 +3,10 @@
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::OnceLock;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 /// 两次 Shift 的最大间隔（毫秒）
-const GAP_MS: i64 = 450;
+const GAP_MS: i64 = 650;
 
 static LAST_SHIFT_MS: AtomicI64 = AtomicI64::new(0);
 /// 事件序号：用来确认两次 Shift 之间没有别的键
@@ -87,9 +87,23 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: windows::Win32::Foundatio
                         std::thread::spawn(move || {
                             eprintln!("[hotkey] 双击 Shift 触发");
                             crate::win::show_palette(&app);
+                            // 弹完再确认一次：钩子触发时没有前台权限，
+                            // 补一轮抢焦点，避免「弹出来但打不了字」
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                            if let Some(window) = app.get_webview_window(crate::MAIN_LABEL) {
+                                let focused = window.is_focused().unwrap_or(false);
+                                if !focused {
+                                    let _ = window.set_focus();
+                                    crate::win::force_foreground(&window);
+                                    eprintln!("[hotkey] 补抢焦点");
+                                }
+                            }
                         });
                     }
                 } else {
+                    if std::env::var_os("XTOOLS_DEBUG").is_some() {
+                        eprintln!("[dblshift] shift 按下 seq={seq}");
+                    }
                     LAST_SHIFT_SEQ.store(seq, Ordering::Relaxed);
                     LAST_SHIFT_MS.store(now, Ordering::Relaxed);
                 }

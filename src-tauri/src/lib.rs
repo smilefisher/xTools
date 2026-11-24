@@ -8,6 +8,7 @@ mod autostart;
 mod service_install;
 mod hotkey;
 mod dblshift;
+mod screenshot_probe;
 mod json;
 mod search;
 mod settings;
@@ -705,6 +706,8 @@ pub fn run() {
             cmd::json_minify,
             cmd::json_validate,
             cmd::json_query,
+            cmd::window_at,
+            cmd::shot_pixels,
             cmd::json_tree,
             cmd::json_read_file,
             cmd::json_write_file,
@@ -744,6 +747,7 @@ pub fn run() {
                 }
             }
 
+            shot::prewarm(&handle);
             let shot_hotkey = settings::current().shot_hotkey;
             if let Err(err) = hotkey::register_action(&handle, &shot_hotkey, |app| {
                 crate::shot::toggle(app);
@@ -956,13 +960,24 @@ pub fn run() {
                 // 只有「确实拿到过焦点」之后的失焦，才当作「用户点了别处」。
                 // 键盘钩子触发时窗口常常一次焦点都没拿到，此时系统发的失焦
                 // 只是噪声，不能用来收起面板（否则一弹出就消失）
-                if window.label() == MAIN_LABEL
-                    && !bench::is_running()
-                    && !win::autohide_disabled()
-                    && win::focused_once()
-                    && !win::shown_within(500)
-                {
-                    let _ = window.hide();
+                if window.label() == MAIN_LABEL {
+                    let focused_once = win::focused_once();
+                    let ago = win::shown_ago_ms();
+                    if !bench::is_running()
+                        && !win::autohide_disabled()
+                        && focused_once
+                        && ago != u64::MAX
+                        && ago > 500
+                    {
+                        if crate::debug_on() {
+                            eprintln!("[win] 失焦收起（拿到过焦点，显示后 {ago}ms）");
+                        }
+                        let _ = window.hide();
+                    } else if crate::debug_on() {
+                        eprintln!(
+                            "[win] 忽略失焦：focused_once={focused_once} 显示后={ago}ms"
+                        );
+                    }
                 }
             }
             _ => {}

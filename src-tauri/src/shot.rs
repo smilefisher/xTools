@@ -20,6 +20,11 @@ static LAST_RECT: OnceLock<Mutex<Option<(i32, i32, u32, u32)>>> = OnceLock::new(
 static FROZEN: OnceLock<Mutex<Option<capture::Frame>>> = OnceLock::new();
 static PIN_SEQ: AtomicU32 = AtomicU32::new(1);
 
+/// 供放大镜/取色读取当前冻结帧
+pub fn frozen_frame() -> &'static Mutex<Option<capture::Frame>> {
+    frozen()
+}
+
 fn frozen() -> &'static Mutex<Option<capture::Frame>> {
     FROZEN.get_or_init(|| Mutex::new(None))
 }
@@ -86,6 +91,50 @@ fn ensure_overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
+/// 启动时预先把覆盖层建好（隐藏）。这样首次截图不需要现建窗口，
+/// 既没有 WebView2 白屏闪烁，也不会出现「刚建好还没挪到全屏」的窗口。
+pub fn prewarm(app: &AppHandle) {
+    if overlay_window(app).is_some() {
+        return;
+    }
+    // 直接按主显示器全屏尺寸建好：这样即使后续 set_position/set_size 有延迟，
+    // 覆盖层也已经是正确几何，不会出现「拖选位置 vs 截取位置」偏移
+    let (pw, ph) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| {
+            let size = m.size();
+            let scale = m.scale_factor();
+            (size.width as f64 / scale, size.height as f64 / scale)
+        })
+        .unwrap_or((1920.0, 1080.0));
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Ok(window) = WebviewWindowBuilder::new(
+            &app,
+            SHOT_LABEL,
+            WebviewUrl::App("index.html#shot".into()),
+        )
+        .inner_size(pw, ph)
+        .position(0.0, 0.0)
+        .title("xTools Shot")
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .shadow(false)
+        .visible(false)
+        .build()
+        {
+            let _ = window.hide();
+            eprintln!("[shot] 覆盖层已预热");
+        }
+    });
+}
+
 /// 热键入口：打开/关闭覆盖窗。
 pub fn toggle(app: &AppHandle) {
     if let Some(window) = overlay_window(app) {
@@ -111,21 +160,32 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
         *guard = Some((origin.x, origin.y, size.width, size.height));
     }
 
-    // 抓帧前先收起自家面板：冻结帧是在唤起瞬间抓的，
-    // 面板还开着的话会被一起截进图里
-    if let Some(main) = app.get_webview_window(crate::MAIN_LABEL) {
-        if main.is_visible().unwrap_or(false) {
-            let _ = main.hide();
-            eprintln!("[shot] 抓帧前已收起面板");
-            std::thread::sleep(std::time::Duration::from_millis(120));
+    // 抓帧前先收起自家界面：面板/上一轮覆盖层如果还可见，会被截进图里。
+    // 隐藏后轮询确认，别只固定 sleep（机器慢时窗口还没真消失）
+    let mut any_hidden = false;
+    for label in ["shot", crate::MAIN_LABEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.hide();
+                any_hidden = true;
+            }
         }
     }
-    // 上一次的覆盖层如果还留着，也先藏掉
-    if let Some(overlay) = overlay_window(app) {
-        if overlay.is_visible().unwrap_or(false) {
-            let _ = overlay.hide();
-            std::thread::sleep(std::time::Duration::from_millis(80));
+    if any_hidden {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+        while std::time::Instant::now() < deadline {
+            let still_visible = ["shot", crate::MAIN_LABEL]
+                .iter()
+                .filter_map(|label| app.get_webview_window(label))
+                .any(|window| window.is_visible().unwrap_or(false));
+            if !still_visible {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        // 再等一帧，让 DWM 真正把窗口从合成里移除
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        eprintln!("[shot] 抓帧前已收起自家窗口");
     }
 
     // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里

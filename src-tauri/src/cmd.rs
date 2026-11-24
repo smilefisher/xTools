@@ -326,6 +326,16 @@ pub fn json_query(text: String, path: String) -> crate::json::JsonResult {
 }
 
 #[tauri::command]
+pub fn window_at(x: i32, y: i32) -> Option<crate::screenshot_probe::WindowHit> {
+    crate::screenshot_probe::window_at(x, y)
+}
+
+#[tauri::command]
+pub fn shot_pixels(x: i32, y: i32, width: i32, height: i32) -> Result<Vec<u8>, String> {
+    crate::screenshot_probe::frozen_rgba(x, y, width, height)
+}
+
+#[tauri::command]
 pub fn json_tree(text: String, limit: Option<usize>) -> crate::json::JsonTree {
     crate::json::tree(&text, limit.unwrap_or(3000))
 }
