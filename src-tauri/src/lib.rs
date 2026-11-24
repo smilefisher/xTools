@@ -947,13 +947,20 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            tauri::WindowEvent::Focused(true) => {
+                if window.label() == MAIN_LABEL {
+                    win::mark_focused();
+                }
+            }
             tauri::WindowEvent::Focused(false) => {
-                // 刚弹出的 400ms 内忽略失焦：这时窗口可能还没抢到焦点，
-                // 系统会先发一次 Focused(false)，不能当成「用户点了别处」
+                // 只有「确实拿到过焦点」之后的失焦，才当作「用户点了别处」。
+                // 键盘钩子触发时窗口常常一次焦点都没拿到，此时系统发的失焦
+                // 只是噪声，不能用来收起面板（否则一弹出就消失）
                 if window.label() == MAIN_LABEL
                     && !bench::is_running()
                     && !win::autohide_disabled()
-                    && !win::shown_within(400)
+                    && win::focused_once()
+                    && !win::shown_within(500)
                 {
                     let _ = window.hide();
                 }

@@ -49,6 +49,10 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 static AUTOHIDE_OFF: AtomicBool = AtomicBool::new(false);
 /// 最近一次显示的时间戳（epoch ms）：用来给「刚弹出」加失焦宽限期
 static SHOWN_AT_MS: AtomicU64 = AtomicU64::new(0);
+/// 这次显示之后，窗口是否真的拿到过焦点。
+/// 键盘钩子触发时进程没有前台权限，窗口可能一次都没拿到焦点，
+/// 此时收到的失焦事件不能当成「用户点走了」。
+static FOCUSED_ONCE: AtomicBool = AtomicBool::new(false);
 
 pub fn autohide_disabled() -> bool {
     AUTOHIDE_OFF.load(Ordering::Relaxed)
@@ -63,6 +67,18 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+pub fn mark_focused() {
+    FOCUSED_ONCE.store(true, Ordering::Relaxed);
+}
+
+pub fn clear_focused() {
+    FOCUSED_ONCE.store(false, Ordering::Relaxed);
+}
+
+pub fn focused_once() -> bool {
+    FOCUSED_ONCE.load(Ordering::Relaxed)
 }
 
 /// 面板是否在 `within_ms` 毫秒内刚显示过。
@@ -96,6 +112,7 @@ pub fn show_palette(app: &AppHandle) {
 
     // 先定位再显示，避免「在旧位置闪一下再跳过来」
     place_on_cursor_monitor(app, &win);
+    clear_focused();
     let _ = win.show();
     let _ = win.set_focus();
     force_foreground(&win);
@@ -170,6 +187,9 @@ pub(crate) fn force_foreground(win: &WebviewWindow) {
         }
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
+        // 键盘钩子触发的场景下 SetForegroundWindow 常被前台锁拒绝，
+        // SwitchToThisWindow 是很多启动器用的兜底
+        let _ = windows::Win32::UI::WindowsAndMessaging::SwitchToThisWindow(hwnd, true);
         if attached {
             let _ = AttachThreadInput(cur_thread, fg_thread, false);
         }
