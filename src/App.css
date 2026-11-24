@@ -722,3 +722,31 @@ kbd {
   inset: 0;
   display: block;
 }
+
+/* 热键录制框 */
+.hotkey-field {
+  min-width: 150px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  background: rgb(255 255 255 / 0.05);
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-align: center;
+}
+
+.hotkey-field:hover {
+  border-color: rgb(91 140 255 / 0.6);
+}
+
+.hotkey-field.recording {
+  border-color: #5b8cff;
+  background: rgb(91 140 255 / 0.16);
+  color: #cfe0ff;
+}
+
+.settings-tip.warn {
+  color: #ffb86b;
+}

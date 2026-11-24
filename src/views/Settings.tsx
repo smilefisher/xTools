@@ -25,7 +25,81 @@ export default function SettingsView() {
   const [exePath, setExePath] = createSignal("");
   const [status, setStatus] = createSignal("");
   const [problems, setProblems] = createSignal<string[]>([]);
-  const [rootInput, setRootInput] = createSignal("");
+  const [recording, setRecording] = createSignal<"hotkey" | "shot_hotkey" | null>(null);
+
+  /// 把 "ctrl+alt+a" 显示成 "Ctrl + Alt + A"
+  const prettyHotkey = (spec: string) =>
+    spec
+      .split("+")
+      .map((part) => {
+        const p = part.trim().toLowerCase();
+        if (p === "ctrl" || p === "control") return "Ctrl";
+        if (p === "alt") return "Alt";
+        if (p === "shift") return "Shift";
+        if (p === "meta" || p === "win" || p === "super") return "Win";
+        if (p === "space") return "Space";
+        if (p === "esc" || p === "escape") return "Esc";
+        if (/^f\d{1,2}$/.test(p)) return p.toUpperCase();
+        return p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1);
+      })
+      .join(" + ");
+
+  /// 从键盘事件生成 "ctrl+alt+a" 形式的字符串；只按了修饰键返回 null
+  const hotkeyFromEvent = (event: KeyboardEvent): string | null => {
+    const key = event.key;
+    if (!key || ["Control", "Alt", "Shift", "Meta"].includes(key)) return null;
+
+    const named: Record<string, string> = {
+      " ": "space",
+      Escape: "esc",
+      Enter: "enter",
+      Tab: "tab",
+      Backspace: "backspace",
+      ArrowUp: "up",
+      ArrowDown: "down",
+      ArrowLeft: "left",
+      ArrowRight: "right",
+      Delete: "delete",
+      Home: "home",
+      End: "end",
+      PageUp: "pageup",
+      PageDown: "pagedown",
+      Insert: "insert",
+    };
+
+    let name = named[key];
+    if (!name) {
+      if (key.length === 1) name = key.toLowerCase();
+      else if (/^F\d{1,2}$/i.test(key)) name = key.toLowerCase();
+      else name = key.toLowerCase();
+    }
+
+    const parts: string[] = [];
+    if (event.ctrlKey) parts.push("ctrl");
+    if (event.altKey) parts.push("alt");
+    if (event.shiftKey) parts.push("shift");
+    if (event.metaKey) parts.push("meta");
+    if (parts.length === 0) return null;
+
+    return [...parts, name].join("+");
+  };
+
+  const recordHotkey = (which: "hotkey" | "shot_hotkey", event: KeyboardEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      setRecording(null);
+      return;
+    }
+    const spec = hotkeyFromEvent(event);
+    if (!spec) {
+      setStatus("请至少按住 Ctrl / Alt / Win 之一再按其它键");
+      return;
+    }
+    patch({ [which]: spec } as Partial<Settings>);
+    setRecording(null);
+    setStatus(`已记录 ${prettyHotkey(spec)}，点「保存」生效`);
+  };
   const [fileStatus, setFileStatus] = createSignal<FileStatus | null>(null);
   const [serviceStatus, setServiceStatus] = createSignal<ServiceStatus | null>(null);
 
@@ -132,23 +206,43 @@ export default function SettingsView() {
           <>
             <section class="settings-group">
               <h3>热键</h3>
-              <label class="settings-row">
+              <div class="settings-row">
                 <span>唤起面板</span>
-                <input
-                  value={settings().hotkey}
-                  onInput={(event) => patch({ hotkey: event.currentTarget.value })}
-                  placeholder="alt+space"
-                />
-              </label>
-              <label class="settings-row">
+                <button
+                  class="hotkey-field"
+                  classList={{ recording: recording() === "hotkey" }}
+                  onMouseDown={() => setRecording("hotkey")}
+                  onKeyDown={(event) => recordHotkey("hotkey", event)}
+                  onBlur={() => setRecording(null)}
+                  title="点击后按下组合键"
+                >
+                  {recording() === "hotkey"
+                    ? "按下组合键…（Esc 取消）"
+                    : prettyHotkey(settings().hotkey)}
+                </button>
+              </div>
+              <div class="settings-row">
                 <span>截图</span>
-                <input
-                  value={settings().shot_hotkey}
-                  onInput={(event) => patch({ shot_hotkey: event.currentTarget.value })}
-                  placeholder="ctrl+alt+a"
-                />
-              </label>
-              <p class="settings-tip">默认 Ctrl+Alt+A（避开中文系统的 Alt+Shift 输入法切换）；保存后立即重新注册。</p>
+                <button
+                  class="hotkey-field"
+                  classList={{ recording: recording() === "shot_hotkey" }}
+                  onMouseDown={() => setRecording("shot_hotkey")}
+                  onKeyDown={(event) => recordHotkey("shot_hotkey", event)}
+                  onBlur={() => setRecording(null)}
+                  title="点击后按下组合键"
+                >
+                  {recording() === "shot_hotkey"
+                    ? "按下组合键…（Esc 取消）"
+                    : prettyHotkey(settings().shot_hotkey)}
+                </button>
+              </div>
+              <p class="settings-tip">
+                点一下输入框，然后直接按组合键即可记录（必须含 Ctrl / Alt / Win）。
+                截图默认 Ctrl+Alt+A，避开中文系统的 Alt+Shift 输入法切换。改完点「保存」立即重新注册。
+              </p>
+              <Show when={settings().hotkey === settings().shot_hotkey}>
+                <p class="settings-tip warn">两个热键不能相同，否则只有一个能生效。</p>
+              </Show>
 
               <label class="settings-row">
                 <span>失焦自动收起</span>
