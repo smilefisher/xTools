@@ -5135,7 +5135,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xtools"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "image",
  "pinyin",
@@ -5154,7 +5154,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-indexd"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "serde",
  "serde_json",
@@ -5164,7 +5164,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-indexer"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "memchr",
  "rayon",
@@ -5174,7 +5174,7 @@ dependencies = [
 
 [[package]]
 name = "xtools-pipe"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "windows 0.61.3",
 ]
