@@ -69,6 +69,59 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 立即隐藏窗口（Win32 直调，不经过 Tauri 的主线程投递）。
+///
+/// 截图流程跑在主线程上，`window.hide()` 的投递会排在后面执行，
+/// 导致「以为隐藏了、其实还在屏幕上」。这里直接 ShowWindow 保证当场生效。
+#[cfg(windows)]
+pub fn hide_now(window: &WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+
+    if let Ok(hwnd) = window.hwnd() {
+        let handle = HWND(hwnd.0 as *mut core::ffi::c_void);
+        unsafe {
+            let _ = ShowWindow(handle, SW_HIDE);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn hide_now(_window: &WebviewWindow) {}
+
+/// 等待桌面合成把当前帧刷完，避免抓到「刚隐藏但还没重绘」的画面。
+#[cfg(windows)]
+pub fn flush_composition() {
+    use windows::Win32::Graphics::Dwm::DwmFlush;
+    unsafe {
+        let _ = DwmFlush();
+    }
+}
+
+#[cfg(not(windows))]
+pub fn flush_composition() {}
+
+/// 用 Win32 查询窗口是否真的还显示在屏幕上。
+/// `WebviewWindow::is_visible()` 读的是 Tauri 自己的状态，`hide()` 只是投递到
+/// 主线程执行，紧接着查询会得到「已隐藏」的假象 —— 截图时不能靠它判断。
+#[cfg(windows)]
+pub fn really_visible(window: &WebviewWindow) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+
+    match window.hwnd() {
+        Ok(hwnd) => unsafe {
+            IsWindowVisible(HWND(hwnd.0 as *mut core::ffi::c_void)).as_bool()
+        },
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn really_visible(_window: &WebviewWindow) -> bool {
+    false
+}
+
 pub fn mark_focused() {
     FOCUSED_ONCE.store(true, Ordering::Relaxed);
 }

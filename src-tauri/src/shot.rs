@@ -25,6 +25,65 @@ pub fn frozen_frame() -> &'static Mutex<Option<capture::Frame>> {
     frozen()
 }
 
+/// 为了抓帧临时隐藏的自家窗口（JSON/设置），抓完要恢复
+static HIDDEN_FOR_CAPTURE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+fn hidden_for_capture() -> &'static Mutex<Vec<String>> {
+    HIDDEN_FOR_CAPTURE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 抓帧前把所有「会出现在屏幕上」的自家窗口都收起来。
+/// 除了面板/覆盖层，JSON 工具窗和设置窗也会被截进去。
+fn hide_own_windows(app: &AppHandle) {
+    use tauri::Manager;
+
+    let mut hidden: Vec<String> = Vec::new();
+    let mut seen = 0usize;
+    // 除了正在作为遮罩的覆盖层，把所有自家窗口都收起来：
+    // 面板、JSON、设置、以及全部贴图窗，一个都不留
+    for (label, window) in app.webview_windows() {
+        seen += 1;
+        if label == SHOT_LABEL {
+            continue;
+        }
+        let visible = crate::win::really_visible(&window);
+        if std::env::var_os("XTOOLS_DEBUG").is_some() {
+            eprintln!("[shot] 自家窗口 {label} 可见={visible}");
+        }
+        if visible {
+            crate::win::hide_now(&window);
+            hidden.push(label);
+        }
+    }
+    // 兜底：枚举不到时按已知 label 逐个处理
+    if seen == 0 {
+        for label in [crate::MAIN_LABEL, JSON_LABEL, SETTINGS_LABEL] {
+            if let Some(window) = app.get_webview_window(label) {
+                if crate::win::really_visible(&window) {
+                    crate::win::hide_now(&window);
+                    hidden.push(label.to_string());
+                }
+            }
+        }
+    }
+    eprintln!("[shot] 抓帧前隐藏自家窗口 {} 个：{hidden:?}", hidden.len());
+    if let Ok(mut guard) = hidden_for_capture().lock() {
+        *guard = hidden;
+    }
+}
+
+fn restore_own_windows(app: &AppHandle) {
+    let labels: Vec<String> = match hidden_for_capture().lock() {
+        Ok(mut guard) => std::mem::take(&mut *guard),
+        Err(_) => Vec::new(),
+    };
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.show();
+        }
+    }
+}
+
 fn frozen() -> &'static Mutex<Option<capture::Frame>> {
     FROZEN.get_or_init(|| Mutex::new(None))
 }
@@ -166,27 +225,31 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
     for label in ["shot", crate::MAIN_LABEL] {
         if let Some(window) = app.get_webview_window(label) {
             if window.is_visible().unwrap_or(false) {
-                let _ = window.hide();
+                crate::win::hide_now(&window);
                 any_hidden = true;
             }
         }
     }
     if any_hidden {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
         while std::time::Instant::now() < deadline {
+            // 必须用 Win32 真查：Tauri 的 is_visible() 在 hide() 投递后立刻返回 false
             let still_visible = ["shot", crate::MAIN_LABEL]
                 .iter()
                 .filter_map(|label| app.get_webview_window(label))
-                .any(|window| window.is_visible().unwrap_or(false));
+                .any(|window| crate::win::really_visible(&window));
             if !still_visible {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(15));
         }
         // 再等一帧，让 DWM 真正把窗口从合成里移除
+        crate::win::flush_composition();
         std::thread::sleep(std::time::Duration::from_millis(60));
         eprintln!("[shot] 抓帧前已收起自家窗口");
     }
+
+    hide_own_windows(app);
 
     // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里
     match capture::capture_rect(origin.x, origin.y, size.width as i32, size.height as i32) {
@@ -300,6 +363,7 @@ pub fn commit(
             }
         }
     };
+    restore_own_windows(app);
     if !ops.is_empty() {
         crate::annotate::apply(&mut frame, ops);
     }
