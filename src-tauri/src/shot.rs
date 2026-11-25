@@ -150,6 +150,31 @@ fn ensure_overlay(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .build()
 }
 
+/// 整个虚拟桌面（所有显示器合起来的矩形）。
+/// 只取光标所在显示器会导致「另一块屏截不到」。
+#[cfg(windows)]
+fn virtual_screen() -> (i32, i32, u32, u32) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    };
+    unsafe {
+        let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if w > 0 && h > 0 {
+            (x, y, w as u32, h as u32)
+        } else {
+            (0, 0, 1920, 1080)
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn virtual_screen() -> (i32, i32, u32, u32) {
+    (0, 0, 1920, 1080)
+}
+
 /// 启动时预先把覆盖层建好（隐藏）。这样首次截图不需要现建窗口，
 /// 既没有 WebView2 白屏闪烁，也不会出现「刚建好还没挪到全屏」的窗口。
 pub fn prewarm(app: &AppHandle) {
@@ -158,16 +183,15 @@ pub fn prewarm(app: &AppHandle) {
     }
     // 直接按主显示器全屏尺寸建好：这样即使后续 set_position/set_size 有延迟，
     // 覆盖层也已经是正确几何，不会出现「拖选位置 vs 截取位置」偏移
-    let (pw, ph) = app
+    let (vx, vy, vw, vh) = virtual_screen();
+    let scale = app
         .primary_monitor()
         .ok()
         .flatten()
-        .map(|m| {
-            let size = m.size();
-            let scale = m.scale_factor();
-            (size.width as f64 / scale, size.height as f64 / scale)
-        })
-        .unwrap_or((1920.0, 1080.0));
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    let (pw, ph) = (vw as f64 / scale, vh as f64 / scale);
+    let (pvw, pvh) = (vx as f64 / scale, vy as f64 / scale);
 
     let app = app.clone();
     std::thread::spawn(move || {
@@ -177,7 +201,7 @@ pub fn prewarm(app: &AppHandle) {
             WebviewUrl::App("index.html#shot".into()),
         )
         .inner_size(pw, ph)
-        .position(0.0, 0.0)
+        .position(pvw, pvh)
         .title("xTools Shot")
         .decorations(false)
         .transparent(true)
@@ -209,14 +233,11 @@ pub fn toggle(app: &AppHandle) {
 ///
 /// 首次创建放到后台线程：热键回调可能在主线程上，直接建窗会自锁。
 pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
-    let cursor = app.cursor_position().ok()?;
-    let monitor = app.monitor_from_point(cursor.x, cursor.y).ok()??;
-    let origin = monitor.position();
-    let size = monitor.size();
-    let (ox, oy, sw, sh) = (origin.x, origin.y, size.width, size.height);
+    // 覆盖整个虚拟桌面（所有显示器），否则另一块屏截不到
+    let (ox, oy, sw, sh) = virtual_screen();
 
     if let Ok(mut guard) = last_rect().lock() {
-        *guard = Some((origin.x, origin.y, size.width, size.height));
+        *guard = Some((ox, oy, sw, sh));
     }
 
     // 抓帧前先收起自家界面：面板/上一轮覆盖层如果还可见，会被截进图里。
@@ -252,7 +273,7 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
     hide_own_windows(app);
 
     // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里
-    match capture::capture_rect(origin.x, origin.y, size.width as i32, size.height as i32) {
+    match capture::capture_rect(ox, oy, sw as i32, sh as i32) {
         Ok(frame) => {
             if std::env::var_os("XTOOLS_SHOT_DUMP").is_some() {
                 if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
@@ -270,15 +291,15 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
     }
 
     let payload = serde_json::json!({
-        "x": origin.x,
-        "y": origin.y,
-        "width": size.width,
-        "height": size.height,
+        "x": ox,
+        "y": oy,
+        "width": sw,
+        "height": sh,
     });
 
     if let Some(window) = overlay_window(app) {
-        let _ = window.set_position(Position::Physical(PhysicalPosition::new(origin.x, origin.y)));
-        let _ = window.set_size(Size::Physical(PhysicalSize::new(size.width, size.height)));
+        let _ = window.set_position(Position::Physical(PhysicalPosition::new(ox, oy)));
+        let _ = window.set_size(Size::Physical(PhysicalSize::new(sw, sh)));
         let _ = window.show();
         let _ = window.set_focus();
         let _ = window.emit("shot:begin", payload.clone());
@@ -287,7 +308,12 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
 
     let app = app.clone();
     let emit_payload = payload.clone();
-    let scale = monitor.scale_factor();
+    let scale = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
     let logical_w = (sw as f64 / scale).max(1.0);
     let logical_h = (sh as f64 / scale).max(1.0);
     let logical_x = ox as f64 / scale;
