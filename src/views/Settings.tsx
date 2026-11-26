@@ -25,6 +25,7 @@ export default function SettingsView() {
   const [exePath, setExePath] = createSignal("");
   const [status, setStatus] = createSignal("");
   const [problems, setProblems] = createSignal<string[]>([]);
+  const [rootInput, setRootInput] = createSignal("");
   const [recording, setRecording] = createSignal<"hotkey" | "shot_hotkey" | null>(null);
 
   /// 把 "ctrl+alt+a" 显示成 "Ctrl + Alt + A"
@@ -167,12 +168,15 @@ export default function SettingsView() {
   onMount(async () => {
     void invoke("log_frontend", { message: "settings view mounted" }).catch(() => {});
     try {
-      setDraft(await invoke<Settings>("settings_get"));
+      const loaded = await invoke<Settings>("settings_get");
+      void invoke("log_frontend", { message: `settings loaded hotkey=${loaded.hotkey} shot=${loaded.shot_hotkey}` }).catch(() => {});
+      setDraft(loaded);
       const auto = await invoke<AutostartState>("autostart_get");
       setAutostartEnabled(auto.enabled);
       setExePath(auto.exe);
       await refreshIndexState();
     } catch (err) {
+      void invoke("log_frontend", { message: `settings load FAILED ${String(err)}` }).catch(() => {});
       setStatus(`读取设置失败：${String(err)}`);
     }
   });

@@ -70,7 +70,14 @@ pub fn first_frame() -> Option<f64> {
 
 #[tauri::command]
 pub fn settings_get() -> Settings {
-    settings::current()
+    if crate::debug_on() {
+        eprintln!("[settings] get 进入");
+    }
+    let current = settings::current();
+    if crate::debug_on() {
+        eprintln!("[settings] get 返回 hotkey={}", current.hotkey);
+    }
+    current
 }
 
 #[tauri::command]
