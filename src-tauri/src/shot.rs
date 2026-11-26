@@ -272,8 +272,24 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
 
     hide_own_windows(app);
 
+    // 激进手段：把面板临时移到屏幕外(-9999, -9999)
+    // 因为 Win32 ShowWindow 在某些机器上有延迟，仅凭隐藏无法保证窗口不被截进去
+    // 直接挪窗口位置是最可靠的物理隐藏方法
+    let main_win = app.get_webview_window(crate::MAIN_LABEL);
+    if let Some(ref window) = main_win {
+        let _ = window.set_position(Position::Physical(PhysicalPosition::new(-9999, -9999)));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
     // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里
-    match capture::capture_rect(ox, oy, sw as i32, sh as i32) {
+    let capture_result = capture::capture_rect(ox, oy, sw as i32, sh as i32);
+    
+    // 立即恢复面板位置
+    if let Some(ref window) = main_win {
+        let _ = window.set_position(Position::Physical(PhysicalPosition::new(0, 0)));
+    }
+
+    match capture_result {
         Ok(frame) => {
             if std::env::var_os("XTOOLS_SHOT_DUMP").is_some() {
                 if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
