@@ -283,11 +283,6 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
 
     // 关键：在覆盖层出现之前抓冻结帧，避免把半透明遮罩一起截进图里
     let capture_result = capture::capture_rect(ox, oy, sw as i32, sh as i32);
-    
-    // 立即恢复面板位置
-    if let Some(ref window) = main_win {
-        let _ = window.set_position(Position::Physical(PhysicalPosition::new(0, 0)));
-    }
 
     match capture_result {
         Ok(frame) => {
@@ -317,6 +312,13 @@ pub fn begin(app: &AppHandle) -> Option<serde_json::Value> {
         let _ = window.set_position(Position::Physical(PhysicalPosition::new(ox, oy)));
         let _ = window.set_size(Size::Physical(PhysicalSize::new(sw, sh)));
         let _ = window.show();
+        
+        // 覆盖层显示出来后才从屏幕外恢复面板位置，这样用户看到的就是覆盖层，不会看到面板闪烁
+        std::thread::sleep(std::time::Duration::from_millis(16)); // 一帧时间
+        if let Some(ref window) = main_win {
+            let _ = window.set_position(Position::Physical(PhysicalPosition::new(0, 0)));
+        }
+        
         let _ = window.set_focus();
         let _ = window.emit("shot:begin", payload.clone());
         return Some(payload);
