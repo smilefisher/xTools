@@ -82,8 +82,9 @@ export default function SettingsView() {
     if (event.altKey) parts.push("alt");
     if (event.shiftKey) parts.push("shift");
     if (event.metaKey) parts.push("meta");
-    if (parts.length === 0) return null;
 
+    // 不再强制要求修饰键：可以只用一个键（如 F9、`），
+    // 由使用者自己承担「全局占用该键」的后果
     return [...parts, name].join("+");
   };
 
@@ -113,13 +114,15 @@ export default function SettingsView() {
     }
 
     const spec = hotkeyFromEvent(event);
-    if (!spec) {
-      setStatus("请至少按住 Ctrl / Alt / Win 之一再按其它键");
-      return;
-    }
+    if (!spec) return;
     patch({ [which]: spec } as Partial<Settings>);
     setRecording(null);
-    setStatus(`已记录 ${prettyHotkey(spec)}，点「保存」生效`);
+    const hasModifier = /^(ctrl|alt|shift|meta)\b/.test(spec);
+    setStatus(
+      hasModifier
+        ? `已记录 ${prettyHotkey(spec)}，点「保存」生效`
+        : `已记录 ${prettyHotkey(spec)}（单键会全局占用这个键），点「保存」生效`,
+    );
   };
   const [fileStatus, setFileStatus] = createSignal<FileStatus | null>(null);
   const [serviceStatus, setServiceStatus] = createSignal<ServiceStatus | null>(null);
@@ -261,7 +264,7 @@ export default function SettingsView() {
                 </button>
               </div>
               <p class="settings-tip">
-                点一下输入框，然后直接按组合键即可记录（必须含 Ctrl / Alt / Win）；连按两次 Shift 可设为「双击 Shift」。
+                点一下输入框，然后直接按键即可记录——组合键、单个按键（如 F9）都支持；连按两次 Shift 可设为「双击 Shift」。
                 截图默认 Ctrl+Alt+A，避开中文系统的 Alt+Shift 输入法切换。改完点「保存」立即重新注册。
               </p>
               <Show when={settings().hotkey === settings().shot_hotkey}>
